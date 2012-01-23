@@ -1,0 +1,3 @@
+<streams>
+ <stream id="0001" url="http://www.kqed.org/listen/live/mp3/kqedradio.pls" mimetype="audio/x-scpls" name="KQED Radio" />
+</streams>
