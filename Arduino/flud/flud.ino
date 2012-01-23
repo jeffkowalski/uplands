@@ -22,17 +22,16 @@
 #endif
 
 static LiquidCrystal        lcd (8,9,4,5,6,7);
-static char const * const   ssid = WIFI_SSID;
-static char const * const   pass = WIFI_PASSPHRASE;
-static long                 last_weather_check  = 0;
-static long                 last_status_print   = 0;
-static long                 last_calendar_check = 0;
+static unsigned long        last_weather_check  = 0;
+static unsigned long        last_status_print   = 0;
+static unsigned long        last_calendar_check = 0;
 static time_t               trigger = 0;
 static int                  pop = 0;
 static WiFlyServer          server(80);
 static WiFlyClient          wundergroundClient("api.wunderground.com", 80);
 static WiFlyClient          pachubeClient("api.pachube.com", 80);
 static WiFlyClient          googleClient("www.google.com", 80);
+
 
 static void say (
   char const * const line1,
@@ -49,16 +48,20 @@ static void say (
   }
 }
 
+
 static time_t getTime() {
   return WiFly.getTime();
 }
 
+
 static char const * timestamp (time_t t) {
     static char datetime[21]; // yyyy-mm-ddThh:mm:ssZ  
                               // 12345678901234567890
-    snprintf (datetime, sizeof(datetime), "%04d-%02d-%02dT%02d:%02d:%02dZ", year(t), month(t), day(t), hour(t), minute(t), second(t));
+    snprintf (datetime, sizeof(datetime), 
+              "%04d-%02d-%02dT%02d:%02d:%02dZ", year(t), month(t), day(t), hour(t), minute(t), second(t));
     return datetime;
 }
+
 
 void setup() {
 #if SSER
@@ -75,8 +78,8 @@ void setup() {
 
   say ("flud.");
   WiFly.begin();
-  //say ("joining network ", ssid); 
-  while (!WiFly.join(ssid, pass, true)) {
+  //say ("joining network ", WIFI_SSID); 
+  while (!WiFly.join(WIFI_SSID, WIFI_PASSPHRASE, true)) {
     //say ("retry join"); 
     delay(3000);  // try again after 3 seconds;
   }
@@ -87,6 +90,7 @@ void setup() {
   setSyncProvider (getTime);
   //say ("server ready", WiFly.ip());
 }
+
 
 static void getResponse (
   WiFlyClient &         client, 
@@ -202,7 +206,9 @@ void checkCalendar() {
     te.Hour   = (cal[11] - '0') * 10 + (cal[12] - '0');
     te.Minute = (cal[14] - '0') * 10 + (cal[15] - '0');
     te.Second = (cal[17] - '0') * 10 + (cal[18] - '0');
-    long zone = (cal[23] == '-' ? -1L : 1L) * (((cal[24] - '0') * 10 + (cal[25] - '0')) * SECS_PER_HOUR + ((cal[27] - '0') * 10 + (cal[28] - '0')) * SECS_PER_MIN);
+    long zone = (cal[23] == '-' ? -1L : 1L) * 
+                            (((cal[24] - '0') * 10 + (cal[25] - '0')) * SECS_PER_HOUR + 
+                             ((cal[27] - '0') * 10 + (cal[28] - '0')) * SECS_PER_MIN);
     trigger = (long)makeTime(te) - zone;
   }
 }
@@ -213,7 +219,7 @@ void checkWeather() {
 #if 1
   char popbuf[4];
   getResponse (wundergroundClient, "/api/" WUNDERGROUND_APIKEY "/forecast/q/94705.json", "\"pop\":", ',', popbuf, sizeof(popbuf));
-  putData (pachubeClient, "/v2/" PACHUBE_FEED "/43762/datastreams/0", "X-PachubeApiKey: " PACHUBE_APIKEY "\r\nContent-Type: text/csv", popbuf);
+  putData (pachubeClient, "/v2/feed/" PACHUBE_FEED "/datastreams/0", "X-PachubeApiKey: " PACHUBE_APIKEY "\r\nContent-Type: text/csv", popbuf);
   pop = atoi(popbuf);
 #endif
 }
@@ -221,10 +227,12 @@ void checkWeather() {
 
 void printStatus() {
   char line[17];
-  snprintf(line, sizeof(line), "%d%% %ldm %db", pop, (trigger ? (trigger - (long)now()) / SECS_PER_MIN : -1), freeMemory());
+  snprintf (line, sizeof(line), 
+            "%d%% %ldm %db", pop, (trigger > now() ? (trigger - now()) / SECS_PER_MIN : -1), freeMemory());
   line[16] = '\0';
   say (timestamp(now())+5, line);
 }
+
 
 void loop() {
   WiFlyClient client = server.available();
