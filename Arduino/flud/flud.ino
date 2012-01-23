@@ -219,7 +219,7 @@ void checkWeather() {
 #if 1
   char popbuf[4];
   getResponse (wundergroundClient, "/api/" WUNDERGROUND_APIKEY "/forecast/q/94705.json", "\"pop\":", ',', popbuf, sizeof(popbuf));
-  putData (pachubeClient, "/v2/feed/" PACHUBE_FEED "/datastreams/0", "X-PachubeApiKey: " PACHUBE_APIKEY "\r\nContent-Type: text/csv", popbuf);
+  putData (pachubeClient, "/v2/feeds/" PACHUBE_FEED "/datastreams/0", "X-PachubeApiKey: " PACHUBE_APIKEY "\r\nContent-Type: text/csv", popbuf);
   pop = atoi(popbuf);
 #endif
 }
