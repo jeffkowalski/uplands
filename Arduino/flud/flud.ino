@@ -9,6 +9,10 @@
 #define CALENDAR_UPDATE_INTERVAL ( 1L * 60L * 1000L)
 #define STATUS_UPDATE_INTERVAL    500L
 
+#define SER_PIN   2  // pin 14 on the 75HC595
+#define RCLK_PIN  3  // pin 12 on the 75HC595
+#define SRCLK_PIN 11 // pin 11 on the 75HC595
+
 #define SSER 0
 
 #if SSER
@@ -26,11 +30,13 @@ static unsigned long        last_weather_check  = 0;
 static unsigned long        last_status_print   = 0;
 static unsigned long        last_calendar_check = 0;
 static time_t               trigger = 0;
+static time_t               advance = 0;
 static int                  pop = 0;
 static WiFlyServer          server(80);
 static WiFlyClient          wundergroundClient("api.wunderground.com", 80);
 static WiFlyClient          pachubeClient("api.pachube.com", 80);
 static WiFlyClient          googleClient("www.google.com", 80);
+static char                 valves;
 
 
 static void say (
@@ -63,6 +69,68 @@ static char const * timestamp (time_t t) {
 }
 
 
+static void putData (
+  WiFlyClient &         client,
+  char const  * const   resource, 
+  char const  * const   headers,
+  char const  *         data) {
+
+  if (!client.connected()) {
+    say (client._domain);
+    client.connect();
+  }
+
+  if (client.connected()) {
+    //say ("putting", resource);
+    client << F("PUT ") << resource << F(" HTTP/1.1") << endl;
+    client << F("Host: ") << client._domain << endl;
+    if (headers && headers[0])
+      client << headers << endl;
+    client << F("Content-Length: ")  << strlen(data) << endl;
+    client << F("Connection: close") << endl;
+    client << endl;
+
+    // here's the actual content of the PUT request:
+    client << data << endl;
+    delay (300);
+    client.stop();
+  } 
+}
+
+
+void putPachubeData (int stream, int value) {
+    char request[sizeof("/v2/feeds/" PACHUBE_FEED "/datastreams/0")];
+    snprintf (request, sizeof(request), "/v2/feeds/%s/datastreams/%d", PACHUBE_FEED, stream);
+    request[sizeof(request)-1] = '\0';
+    char data[6];
+    snprintf (data, sizeof(data), "%d", value);
+    data[sizeof(data)-1] = '\0';
+    putData (pachubeClient, request, "X-PachubeApiKey: " PACHUBE_APIKEY "\r\nContent-Type: text/csv", data);
+}
+
+
+void commitValves() {
+  digitalWrite (RCLK_PIN, LOW);
+  for (int ii = 7; ii >= 0; --ii) {
+    digitalWrite (SRCLK_PIN, LOW);
+    digitalWrite (SER_PIN, (valves & (1 << ii)) ? HIGH : LOW);
+    digitalWrite (SRCLK_PIN, HIGH);
+    putPachubeData (ii+1, (valves & (1 << ii)) ? 1 : 0);
+  }
+  digitalWrite(RCLK_PIN, HIGH);
+  putPachubeData (9, valves);
+}
+
+
+// set an individual valve HIGH or LOW
+void setValve(int index, int value) {
+  if (value) 
+    valves |=  (1 << index);
+  else
+    valves &= ~(1 << index);
+}
+
+
 void setup() {
 #if SSER
   Serial.begin(9600);
@@ -75,14 +143,21 @@ void setup() {
 #endif
 
   lcd.begin(16, 2);
-
   say ("flud.");
+
   WiFly.begin();
   //say ("joining network ", WIFI_SSID); 
   while (!WiFly.join(WIFI_SSID, WIFI_PASSPHRASE, true)) {
     //say ("retry join"); 
     delay(3000);  // try again after 3 seconds;
   }
+
+  //say ("resetting valves")
+  pinMode (SER_PIN,   OUTPUT);
+  pinMode (RCLK_PIN,  OUTPUT);
+  pinMode (SRCLK_PIN, OUTPUT);
+  valves = 0;
+  commitValves();
 
   //say ("starting server"); 
   delay(3000);
@@ -150,35 +225,7 @@ static void getResponse (
 }
 
 
-static void putData (
-  WiFlyClient &         client,
-  char const  * const   resource, 
-  char const  * const   headers,
-  char const  *         data) {
-
-  if (!client.connected()) {
-    say (client._domain);
-    client.connect();
-  }
-
-  if (client.connected()) {
-    //say ("putting", resource);
-    client << F("PUT ") << resource << F(" HTTP/1.1") << endl;
-    client << F("Host: ") << client._domain << endl;
-    if (headers && headers[0])
-      client << headers << endl;
-    client << F("Content-Length: ")  << strlen(data) << endl;
-    client << F("Connection: close") << endl;
-    client << endl;
-
-    // here's the actual content of the PUT request:
-    client << data << endl;
-    delay (300);
-    client.stop();
-  } 
-}
-
-
+// find trigger in calendar from now to one hour from now, or -1 if none
 void checkCalendar() {
   //say ("calendar");
   char cal[32];
@@ -213,8 +260,8 @@ void checkWeather() {
 #if 1
   char popbuf[4];
   getResponse (wundergroundClient, "/api/" WUNDERGROUND_APIKEY "/forecast/q/94705.json", "\"pop\":", ',', popbuf, sizeof(popbuf));
-  putData (pachubeClient, "/v2/feeds/" PACHUBE_FEED "/datastreams/0", "X-PachubeApiKey: " PACHUBE_APIKEY "\r\nContent-Type: text/csv", popbuf);
   pop = atoi(popbuf);
+  putPachubeData (0, pop);
 #endif
 }
 
@@ -222,8 +269,8 @@ void checkWeather() {
 void printStatus() {
   char line[17];
   snprintf (line, sizeof(line), 
-            "%d%% %ldm %db", pop, (trigger > now() ? (trigger - now()) / SECS_PER_MIN : -1), freeMemory());
-  line[16] = '\0';
+            "%d%% %ldm %db %02x", pop, (trigger > now() ? (trigger - now()) / SECS_PER_MIN : -1), freeMemory(), (unsigned int)valves);
+  line[sizeof(line)-1] = '\0';
   say (timestamp(now())+5, line);
 }
 
@@ -264,17 +311,30 @@ void loop() {
     client.stop();
     //say ("client stopped");
   }
-  else if (!last_weather_check || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL)) {
+  else if (!valves && (!last_weather_check || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL))) {
     checkWeather();
     last_weather_check = millis();
   }
-  else if (!last_calendar_check || (millis() - last_calendar_check > CALENDAR_UPDATE_INTERVAL)) {
+  else if (!valves && (!last_calendar_check || (millis() - last_calendar_check > CALENDAR_UPDATE_INTERVAL))) {
     checkCalendar();
     last_calendar_check = millis();
   }
   else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL) {
     printStatus();
     last_status_print = millis();
+  }
+  else if (!valves && trigger && trigger < now()) {
+    //TODO: remove this valve test
+    valves = 1;
+    advance = now() + 30;
+    commitValves();
+  }
+  else if (valves && advance < now()) {
+    valves <<= 1;
+    advance = now() + 30;
+    commitValves();
+    if (!valves) 
+      trigger = 0;
   }
 }
 
