@@ -37,7 +37,7 @@ static WiFlyClient          wundergroundClient("api.wunderground.com", 80);
 static WiFlyClient          pachubeClient("api.pachube.com", 80);
 static WiFlyClient          googleClient("www.google.com", 80);
 static int                  valves;
-static int                  durations[8] = {1, 2, 1, 2, 1, 2, 1, 2};
+static int                  durations[8] = {1, 2, 1, 2, 1, 2, 0, 2};
 
 static void say (
   char const * const line1,
@@ -257,11 +257,44 @@ void checkWeather() {
 
 
 void printStatus() {
-  char line[17];
-  snprintf (line, sizeof(line), 
-            "%d%% %ldm %db %02x", pop, (trigger > now() ? (trigger - now()) / SECS_PER_MIN : -1), freeMemory(), valves);
+  char      line[17];
+  time_t    current = now();
+  if (valves && advance > current)
+    snprintf (line, sizeof(line), 
+              "v%d %02ld:%02ld  %db", valves, 
+              (advance - current) / SECS_PER_MIN, 
+              (advance - current) % SECS_PER_MIN, 
+              freeMemory());
+  else if (trigger > current)
+    snprintf (line, sizeof(line), 
+              "%d%% %02ld:%02ld  %db", pop, 
+              (trigger - current) / SECS_PER_MIN,
+              (trigger - current) % SECS_PER_MIN,
+              freeMemory());
+  else
+    snprintf (line, sizeof(line), 
+              "%d%%  %db", pop, 
+              freeMemory());
   line[sizeof(line)-1] = '\0';
   say (timestamp(now())+5, line);
+}
+
+
+void advanceValves() {
+  putPachubeData (1, valves);
+
+  do {
+    ++valves;
+  } while (valves < 9 && !durations[valves-1]);
+
+  if (valves >= 9) {
+    valves = 0;
+    trigger = 0;
+  }
+  else
+    advance = now() + durations[valves-1] * SECS_PER_MIN;
+
+  commitValves();
 }
 
 
@@ -309,28 +342,13 @@ void loop() {
     checkCalendar();
     last_calendar_check = millis();
   }
+  else if (!valves && trigger && trigger < now() ||  // valves are off, but it's time to start, or
+           valves && advance < now()) {              // a valve is on for long enough
+    advanceValves();
+  }
   else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL) {
     printStatus();
     last_status_print = millis();
-  }
-  else if (!valves && trigger && trigger < now()) {
-    //TODO: remove this valve test
-    valves = 1;
-    advance = now() + durations[valves-1] * SECS_PER_MIN;
-    commitValves();
-  }
-  else if (valves && advance < now()) {
-    putPachubeData (1, valves);
-
-    ++valves;
-    if (valves == 9) {
-      valves = 0;
-      trigger = 0;
-    }
-    else 
-      advance = now() + durations[valves-1] * SECS_PER_MIN;
-
-    commitValves();
   }
 }
 
