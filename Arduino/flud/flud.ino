@@ -36,8 +36,8 @@ static WiFlyServer          server(80);
 static WiFlyClient          wundergroundClient("api.wunderground.com", 80);
 static WiFlyClient          pachubeClient("api.pachube.com", 80);
 static WiFlyClient          googleClient("www.google.com", 80);
-static char                 valves;
-
+static int                  valves;
+static int                  durations[8] = {1, 2, 1, 2, 1, 2, 1, 2};
 
 static void say (
   char const * const line1,
@@ -111,23 +111,13 @@ void putPachubeData (int stream, int value) {
 
 void commitValves() {
   digitalWrite (RCLK_PIN, LOW);
-  for (int ii = 7; ii >= 0; --ii) {
+  for (int ii = 8; ii > 0; --ii) {
     digitalWrite (SRCLK_PIN, LOW);
-    digitalWrite (SER_PIN, (valves & (1 << ii)) ? HIGH : LOW);
+    digitalWrite (SER_PIN, valves == ii ? HIGH : LOW);
     digitalWrite (SRCLK_PIN, HIGH);
-    putPachubeData (ii+1, (valves & (1 << ii)) ? 1 : 0);
   }
   digitalWrite(RCLK_PIN, HIGH);
-  putPachubeData (9, valves);
-}
-
-
-// set an individual valve HIGH or LOW
-void setValve(int index, int value) {
-  if (value) 
-    valves |=  (1 << index);
-  else
-    valves &= ~(1 << index);
+  putPachubeData (1, valves);
 }
 
 
@@ -269,7 +259,7 @@ void checkWeather() {
 void printStatus() {
   char line[17];
   snprintf (line, sizeof(line), 
-            "%d%% %ldm %db %02x", pop, (trigger > now() ? (trigger - now()) / SECS_PER_MIN : -1), freeMemory(), (unsigned int)valves);
+            "%d%% %ldm %db %02x", pop, (trigger > now() ? (trigger - now()) / SECS_PER_MIN : -1), freeMemory(), valves);
   line[sizeof(line)-1] = '\0';
   say (timestamp(now())+5, line);
 }
@@ -326,15 +316,21 @@ void loop() {
   else if (!valves && trigger && trigger < now()) {
     //TODO: remove this valve test
     valves = 1;
-    advance = now() + 30;
+    advance = now() + durations[valves-1] * SECS_PER_MIN;
     commitValves();
   }
   else if (valves && advance < now()) {
-    valves <<= 1;
-    advance = now() + 30;
-    commitValves();
-    if (!valves) 
+    putPachubeData (1, valves);
+
+    ++valves;
+    if (valves == 9) {
+      valves = 0;
       trigger = 0;
+    }
+    else 
+      advance = now() + durations[valves-1] * SECS_PER_MIN;
+
+    commitValves();
   }
 }
 
