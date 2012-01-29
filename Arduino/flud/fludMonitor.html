@@ -1,0 +1,68 @@
+<html>
+  <head>
+    <script type='text/javascript' src='http://www.google.com/jsapi'></script>
+    <script type='text/javascript'>
+
+      google.load('visualization', '1', {'packages':['annotatedtimeline']});
+      google.setOnLoadCallback(drawVisualization);
+      function drawVisualization() {
+        var headID     = document.getElementsByTagName('head')[0]; 
+        var newScript;
+        newScript      = document.createElement('script'); 
+        newScript.type = 'text/javascript'; 
+        newScript.src  = 'http://apps.pachube.com/history/archive_json.php?f=43762&d=0&callback=process0'; 
+        headID.appendChild (newScript); 
+        newScript      = document.createElement('script'); 
+        newScript.type = 'text/javascript'; 
+        newScript.src  = 'http://apps.pachube.com/history/archive_json.php?f=43762&d=1&callback=process1'; 
+        headID.appendChild (newScript); 
+      } 
+
+      function process0 (archive) { process ("visualization0", archive); }
+      function process1 (archive) { process ("visualization1", archive); }
+      
+      function process (divname, archive) { 
+        var d; 
+        var val; 
+        var data = new google.visualization.DataTable(); 
+        data.addColumn ('datetime', 'Date'); 
+        data.addColumn ('number', 'Datastream value'); 
+        for ( var i in archive['time'] ) { 
+            var timestamp = archive['time'][i]; 
+            if (typeof(timestamp) != "function") {
+                var thisrow  = data.addRow(); 
+                var ts_parts = timestamp.split('T'); 
+                var d_parts  = ts_parts[0].split('-'); 
+                var t_parts  = ts_parts[1].split(':'); 
+                d = new Date (Date.UTC(parseInt(d_parts[0],10), parseInt(d_parts[1],10)-1, parseInt(d_parts[2],10), 
+                                      parseInt(t_parts[0],10), parseInt(t_parts[1],10), parseInt(t_parts[2],10) ) ); 
+                val = parseFloat(archive['value'][i]); 
+                data.setValue(thisrow, 0, d); 
+                data.setValue(thisrow, 1, val); 
+            }
+        } 
+
+        var chart = new google.visualization.AnnotatedTimeLine(document.getElementById(divname)); 
+        chart.draw (data, {displayAnnotations:true});
+                       //thickness:1,",maxmin,"displayExactValues:true,fill:20,colors:['#",color,"']}); 
+      }
+    </script>
+
+  </head>
+
+  <body>
+
+    <div id="visualization0" style="width:600px; height:200px; font-size:small;"></div>
+    <div id="visualization1" style="width:600px; height:200px; font-size:small;"></div>
+
+
+<OBJECT classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000" codebase="http://download.macromedia.com/pub/shockwave/cabs/flash/swflash.cab#version=6,0,0,0" WIDTH="200" HEIGHT="100" id="gauge"><PARAM NAME="movie" VALUE="http://apps.pachube.com/scaredycat/gauge.swf?xml_source=http%3A//apps.pachube.com/scaredycat/getData.php%3Fm%3D0%26f%3D43762%26s%3D0%26u%3D100%26l%3D0%26n%3D5%26t%3DChance%20of%20Rain%26w%3Dtrue%26c1%3D33FF33%26c2%3DEFE415%26c3%3DEF8B15%26c4%3DFF3333%26in%3Dfalse" />
+    <PARAM NAME="quality" VALUE="high" />
+    <param name="wmode" value="transparent">
+    <param name="allowScriptAccess" value="sameDomain" />
+    <EMBED src="http://apps.pachube.com/scaredycat/gauge.swf?xml_source=http%3A//apps.pachube.com/scaredycat/getData.php%3Fm%3D0%26f%3D43762%26s%3D0%26u%3D100%26l%3D0%26n%3D5%26t%3DChance%20of%20Rain%26w%3Dtrue%26c1%3D33FF33%26c2%3DEFE415%26c3%3DEF8B15%26c4%3DFF3333%26in%3Dfalse" quality="high" wmode="transparent" WIDTH="200" HEIGHT="100" NAME="gauge" allowScriptAccess="sameDomain" swLiveConnect="true" TYPE="application/x-shockwave-flash" PLUGINSPAGE="http://www.macromedia.com/go/getflashplayer">
+    </EMBED>
+</OBJECT>
+
+</body>
+</html>
