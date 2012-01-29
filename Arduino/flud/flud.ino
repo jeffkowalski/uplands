@@ -112,13 +112,7 @@ static void getResponse (
     client << F("Host: ") << client._domain << endl;
     client << F("Connection: close") << endl;
     client << endl;
-
-    // wait a little for the response;
-    int retries = 10;
-    while (!client.available() && retries--) {
-      delay(100);
-    }
-    
+ 
     //say ("parsing");
     int target_len = strlen(target);
     char const * try_target = target;
@@ -146,7 +140,7 @@ static void getResponse (
         }
 
         else //c == terminal
-        response_len = 0;
+          response_len = 0;
       }
     }
     *response = '\0';
