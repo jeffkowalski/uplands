@@ -3,6 +3,7 @@
 #include <WiFly.h>
 #include <Time.h>
 #include <Streaming.h>
+#include <EEPROM.h>
 #include "Credentials.h"
 
 #define WEATHER_UPDATE_INTERVAL  (15L * 60L * 1000L)
@@ -25,6 +26,8 @@
   #define LOGX (void)
 #endif
 
+#define VALVE_COUNT         8
+
 static LiquidCrystal        lcd (8,9,4,5,6,7);
 static unsigned long        last_weather_check  = 0;
 static unsigned long        last_status_print   = 0;
@@ -37,7 +40,50 @@ static WiFlyClient          wundergroundClient("api.wunderground.com", 80);
 static WiFlyClient          pachubeClient("api.pachube.com", 80);
 static WiFlyClient          googleClient("www.google.com", 80);
 static int                  valves;
-static int                  durations[8] = {1, 2, 1, 2, 1, 2, 0, 2};
+
+#define VALVE_NAME_SIZE     16
+struct EEPROMSettings {
+  int                       valveDuration[VALVE_COUNT];
+  char                      valveName[VALVE_COUNT][VALVE_NAME_SIZE];
+};
+
+int get_valveDuration (int index) {
+  int  retval = 0;
+  if (index < VALVE_COUNT) {
+    byte * bytes = (byte *)&retval;
+    EEPROMSettings * settings = 0;
+    for (unsigned int ii = 0; ii < sizeof(settings->valveDuration[0]); ++ii)
+      bytes[ii] = EEPROM.read ((int)&settings->valveDuration[index] - (int)settings + ii);
+  }
+  return retval;
+}
+void set_valveDuration (int index, int time) {
+  if (index < VALVE_COUNT) {
+    byte * bytes = (byte *)&time;
+    EEPROMSettings * settings = 0;
+    for (unsigned int ii = 0; ii < sizeof(settings->valveDuration[0]); ++ii)
+      EEPROM.write ((int)&settings->valveDuration[index] - (int)settings + ii, bytes[ii]);
+  }
+}
+char * get_valveName (int index, char * name, int name_len) {
+  if (index < VALVE_COUNT) {
+    EEPROMSettings * settings = 0;
+    for (int ii = 0; ii < name_len; ++ii)
+      name[ii] = EEPROM.read ((int)&settings->valveName[index][ii] - (int)settings);
+  }
+  name[name_len-1] = '\0';
+  return name;
+}
+void set_valveName (int index, char * name) {
+  if (index < VALVE_COUNT) {
+    EEPROMSettings * settings = 0;
+    for (unsigned int ii = 0; ii < sizeof(settings->valveName[ii]); ++ii) {
+      EEPROM.write ((int)&settings->valveName[index][ii] - (int)settings, name[ii]);
+      if (!name[ii]) break;
+    }
+  }
+}
+
 
 static void say (
   char const * const line1,
@@ -111,7 +157,7 @@ void putPachubeData (int stream, int value) {
 
 void commitValves() {
   digitalWrite (RCLK_PIN, LOW);
-  for (int ii = 8; ii > 0; --ii) {
+  for (int ii = VALVE_COUNT; ii > 0; --ii) {
     digitalWrite (SRCLK_PIN, LOW);
     digitalWrite (SER_PIN, valves == ii ? HIGH : LOW);
     digitalWrite (SRCLK_PIN, HIGH);
@@ -158,6 +204,47 @@ void setup() {
 
 
 static void getResponse (
+  WiFlyClient &         client,
+  char const  *         target, 
+  char                  terminal, 
+  char        *         response, 
+  int                   response_len) {
+  
+  //say ("parsing");
+  int target_len = strlen(target);
+  char const * try_target = target;
+  int try_target_len = target_len;
+  --response_len;
+  while (client.connected() && response_len > 0) {
+    while (client.available() && response_len > 0) {
+      char c = client.read();
+      LOGX(c);
+
+      if (try_target_len) {
+        if (c == *try_target) {
+          ++try_target;
+          --try_target_len;
+        }
+        else {
+          try_target = target;
+          try_target_len = target_len;
+        }
+      }
+
+      else if (c != terminal) {
+        *response++ = c;
+        --response_len;
+      }
+
+      else //c == terminal
+        response_len = 0;
+    }
+  }
+  *response = '\0';
+}
+
+
+static void getData (
   WiFlyClient &         client, 
   char const  *         resource, 
   char const  *         target, 
@@ -177,38 +264,8 @@ static void getResponse (
     client << F("Host: ") << client._domain << endl;
     client << F("Connection: close") << endl;
     client << endl;
- 
-    //say ("parsing");
-    int target_len = strlen(target);
-    char const * try_target = target;
-    int try_target_len = target_len;
-    --response_len;
-    while (client.connected() && response_len > 0) {
-      while (client.available() && response_len > 0) {
-        char c = client.read();
-        LOGX(c);
-
-        if (try_target_len) {
-          if (c == *try_target) {
-            ++try_target;
-            --try_target_len;
-          }
-          else {
-            try_target = target;
-            try_target_len = target_len;
-          }
-        }
-
-        else if (c != terminal) {
-          *response++ = c;
-          --response_len;
-        }
-
-        else //c == terminal
-          response_len = 0;
-      }
-    }
-    *response = '\0';
+    
+    getResponse (client, target, terminal, response, response_len);
 
     client.stop();
   }
@@ -220,12 +277,13 @@ void checkCalendar() {
   //say ("calendar");
   char cal[32];
   cal[0] = '\0';
-  char * resource = "/calendar/feeds/" GOOGLE_FEED "@group.calendar.google.com/private-" GOOGLE_PRIVATE "/full?fields=entry(gd:when,title[text()='flud'])&singleevents=true&prettyprint=true&max-results=1&orderby=starttime&sortorder=a&start-min=2012-01-20T00:00:00Z&start-max=2012-01-20T23:59:59Z";
+  // cast away const to enable overwriting static string -- be careful!
+  char * resource = (char *)"/calendar/feeds/" GOOGLE_FEED "@group.calendar.google.com/private-" GOOGLE_PRIVATE "/full?fields=entry(gd:when,title[text()='flud'])&singleevents=true&prettyprint=true&max-results=1&orderby=starttime&sortorder=a&start-min=2012-01-20T00:00:00Z&start-max=2012-01-20T23:59:59Z";
   char * found = strstr (resource, "start-min=");
   if (found) strncpy (found+10, timestamp(now()), 20);
   found = strstr (resource, "start-max=");
   if (found) strncpy (found+10, timestamp(now()+SECS_PER_HOUR), 20);
-  getResponse (googleClient, resource, "startTime='", '\'', cal, sizeof(cal));
+  getData (googleClient, resource, "startTime='", '\'', cal, sizeof(cal));
   trigger = 0;
   if (cal[0]) {
     //yyyy-mm-ddThh:mm:ss.000-ZZ:ZZ  
@@ -247,12 +305,11 @@ void checkCalendar() {
 
 void checkWeather() {
   //say ("weather");
-#if 1
   char popbuf[4];
-  getResponse (wundergroundClient, "/api/" WUNDERGROUND_APIKEY "/forecast/q/94705.json", "\"pop\":", ',', popbuf, sizeof(popbuf));
+  getData (wundergroundClient, "/api/" WUNDERGROUND_APIKEY "/forecast/q/94705.json", 
+           "\"pop\":", ',', popbuf, sizeof(popbuf));
   pop = atoi(popbuf);
   putPachubeData (0, pop);
-#endif
 }
 
 
@@ -285,22 +342,51 @@ void advanceValves() {
 
   do {
     ++valves;
-  } while (valves < 9 && !durations[valves-1]);
+  } while (valves < 9 && !get_valveDuration(valves-1));
 
   if (valves >= 9) {
     valves = 0;
     trigger = 0;
   }
   else
-    advance = now() + durations[valves-1] * SECS_PER_MIN;
+    advance = now() + get_valveDuration(valves-1) * SECS_PER_MIN;
 
   commitValves();
+}
+
+
+void sendIndex (
+  WiFlyClient &client) {
+  client << F("HTTP/1.1 200 OK") << endl;
+  client << F("Content-Type: text/html") << endl << endl;
+  client << F("millis = ") << millis() << F("<br>");
+  client << F("time = ") << timestamp(now()) << F("<br>");
+  client << F("pop = ") << pop << F("<br>");
+  client << "Valves <form method='POST'>";
+  for (int ii = 0; ii < VALVE_COUNT; ++ii) {
+    char name[VALVE_NAME_SIZE];
+    client << F("<input type='text' name='n") << ii << F("' value='") << get_valveName(ii, name, sizeof(name)) << F("' />");
+    client << F("<input type='text' name='d") << ii << F("' value='") << get_valveDuration(ii)                 << F("' />");
+    client << F("<br>");
+  }
+  client << F("<input type='hidden' name='h' /><input type='submit' value='Submit' /></form>");
+}
+
+
+void send404 (
+  WiFlyClient &client) {
+  client << F("HTTP/1.1 404 NOT FOUND") << endl << endl;
 }
 
 
 void loop() {
   WiFlyClient client = server.available();
   if (client) {
+    char method[5];
+    char resource[32];
+    getResponse (client, "", ' ', method, sizeof(method));
+    if (!strcmp (method, "GET"))
+      getResponse (client, "", ' ', resource, sizeof(resource));
     //say ("client active");
     // an http request ends with a blank line
     boolean current_line_is_blank = true;
@@ -311,12 +397,6 @@ void loop() {
         // character) and the line is blank, the http request has ended,
         // so we can send a reply
         if (c == '\n' && current_line_is_blank) {
-          // send a standard http response header
-          client << F("HTTP/1.1 200 OK") << endl;
-          client << F("Content-Type: text/html") << endl << endl;
-          client << F("millis = ") << millis() << F("<br>") << endl;
-          client << F("time = ") << timestamp(now()) << F("<br>") << endl;
-          client << F("pop = ") << pop << F("<br>") << endl;
           break;
         }
         if (c == '\n') {
@@ -329,6 +409,32 @@ void loop() {
         }
       }
     }
+    if (!strcmp (method, "GET"))
+      sendIndex (client);
+    else if (!strcmp (method, "POST")) {
+      //  xx=yy&
+      do {
+        getResponse (client, "", '=', resource, sizeof(resource));
+        if (!strcmp(resource, "h")) 
+          break;
+        else {
+          int index = atoi(&resource[1]);
+          if (resource[0] == 'n') {
+            getResponse (client, "", '&', resource, sizeof(resource));
+            set_valveName (index, resource);
+          }
+          else if (resource[0] == 'd') {
+            getResponse (client, "", '&', resource, sizeof(resource));
+            set_valveDuration (index, atoi(resource));
+          }
+          else 
+            break;
+        }
+      } while (resource[0]);
+      sendIndex (client);
+    }
+    else 
+      send404 (client);
     // give the web browser time to receive the data
     delay(100);
     client.stop();
@@ -342,8 +448,8 @@ void loop() {
     checkCalendar();
     last_calendar_check = millis();
   }
-  else if (!valves && trigger && trigger < now() ||  // valves are off, but it's time to start, or
-           valves && advance < now()) {              // a valve is on for long enough
+  else if ((!valves && trigger && trigger < now()) ||  // valves are off, but it's time to start, or
+           ( valves && advance < now())) {              // a valve is on for long enough
     advanceValves();
   }
   else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL) {
