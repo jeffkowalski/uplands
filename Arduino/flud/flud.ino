@@ -39,7 +39,7 @@ static WiFlyServer          server(80);
 static WiFlyClient          wundergroundClient("api.wunderground.com", 80);
 static WiFlyClient          pachubeClient("api.pachube.com", 80);
 static WiFlyClient          googleClient("www.google.com", 80);
-static int                  valves;
+static int                  valveOn = 0; // from [1..VALVE_COUNT], or 0 if off
 
 #define VALVE_NAME_SIZE     16
 struct EEPROMSettings {
@@ -157,13 +157,14 @@ void putPachubeData (int stream, int value) {
 
 void commitValves() {
   digitalWrite (RCLK_PIN, LOW);
-  for (int ii = VALVE_COUNT; ii > 0; --ii) {
+  // shift them in, most significant first
+  for (int ii = VALVE_COUNT; ii > 0; --ii) {  
     digitalWrite (SRCLK_PIN, LOW);
-    digitalWrite (SER_PIN, valves == ii ? HIGH : LOW);
+    digitalWrite (SER_PIN, valveOn == ii ? HIGH : LOW);
     digitalWrite (SRCLK_PIN, HIGH);
   }
   digitalWrite(RCLK_PIN, HIGH);
-  putPachubeData (1, valves);
+  putPachubeData (1, valveOn);
 }
 
 
@@ -182,9 +183,9 @@ void setup() {
   say ("flud.");
 
   WiFly.begin();
-  //say ("joining network ", WIFI_SSID); 
+  say ("joining network ", WIFI_SSID); 
   while (!WiFly.join(WIFI_SSID, WIFI_PASSPHRASE, true)) {
-    //say ("retry join"); 
+    say ("retry join"); 
     delay(3000);  // try again after 3 seconds;
   }
 
@@ -192,7 +193,7 @@ void setup() {
   pinMode (SER_PIN,   OUTPUT);
   pinMode (RCLK_PIN,  OUTPUT);
   pinMode (SRCLK_PIN, OUTPUT);
-  valves = 0;
+  valveOn = 0;
   commitValves();
 
   //say ("starting server"); 
@@ -316,9 +317,9 @@ void checkWeather() {
 void printStatus() {
   char      line[17];
   time_t    current = now();
-  if (valves && advance > current)
+  if (valveOn && advance > current)
     snprintf (line, sizeof(line), 
-              "v%d %02ld:%02ld  %db", valves, 
+              "v%d %02ld:%02ld  %db", valveOn, 
               (advance - current) / SECS_PER_MIN, 
               (advance - current) % SECS_PER_MIN, 
               freeMemory());
@@ -338,20 +339,28 @@ void printStatus() {
 
 
 void advanceValves() {
-  putPachubeData (1, valves);
+  putPachubeData (1, valveOn);
 
   do {
-    ++valves;
-  } while (valves < 9 && !get_valveDuration(valves-1));
+    ++valveOn;
+  } while (valveOn <= VALVE_COUNT && !get_valveDuration (valveOn-1));
 
-  if (valves >= 9) {
-    valves = 0;
+  if (valveOn > VALVE_COUNT) {
+    valveOn = 0;
     trigger = 0;
   }
   else
-    advance = now() + get_valveDuration(valves-1) * SECS_PER_MIN;
+    advance = now() + get_valveDuration (valveOn-1) * SECS_PER_MIN;
 
   commitValves();
+}
+
+
+void stopValves() {
+    putPachubeData (1, valveOn);
+    valveOn = 0;
+    trigger = 0;
+    commitValves();
 }
 
 
@@ -365,11 +374,12 @@ void sendIndex (
   client << "Valves <form method='POST'>";
   for (int ii = 0; ii < VALVE_COUNT; ++ii) {
     char name[VALVE_NAME_SIZE];
-    client << F("<input type='text' name='n") << ii << F("' value='") << get_valveName(ii, name, sizeof(name)) << F("' />");
-    client << F("<input type='text' name='d") << ii << F("' value='") << get_valveDuration(ii)                 << F("' />");
+    client << F("<input type='text' name='") << F("n") << ii << F("' value='") << get_valveName(ii, name, sizeof(name)) << F("' />");
+    client << F("<input type='text' name='") << F("d") << ii << F("' value='") << get_valveDuration(ii)                 << F("' />");
     client << F("<br>");
   }
   client << F("<input type='hidden' name='h' /><input type='submit' value='Submit' /></form>");
+//  client << F("<input type='submit' value='Advance' /><input type='submit' value='Stop' />");
 }
 
 
@@ -409,8 +419,15 @@ void loop() {
         }
       }
     }
-    if (!strcmp (method, "GET"))
+    if (!strcmp (method, "GET")) {
+#if 0
+      if (!strcmp (resource, "Advance"))
+        advanceValves();
+      else if (!strcmp (resource, "Stop"))
+        stopValves();
+#endif        
       sendIndex (client);
+    }
     else if (!strcmp (method, "POST")) {
       //  xx=yy&
       do {
@@ -440,16 +457,16 @@ void loop() {
     client.stop();
     //say ("client stopped");
   }
-  else if (!valves && (!last_weather_check || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL))) {
+  else if (!valveOn && (!last_weather_check  || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL))) {
     checkWeather();
     last_weather_check = millis();
   }
-  else if (!valves && (!last_calendar_check || (millis() - last_calendar_check > CALENDAR_UPDATE_INTERVAL))) {
+  else if (!valveOn && (!last_calendar_check || (millis() - last_calendar_check > CALENDAR_UPDATE_INTERVAL))) {
     checkCalendar();
     last_calendar_check = millis();
   }
-  else if ((!valves && trigger && trigger < now()) ||  // valves are off, but it's time to start, or
-           ( valves && advance < now())) {              // a valve is on for long enough
+  else if ((!valveOn && trigger && trigger < now()) ||  // valves are off, but it's time to start, or
+           ( valveOn && advance < now())) {             // a valve has been running for long enough
     advanceValves();
   }
   else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL) {
