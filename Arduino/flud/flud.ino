@@ -182,7 +182,7 @@ void setup() {
   say ("flud.");
 
   WiFly.begin();
-  //say ("joining network ", WIFI_SSID); 
+  say ("joining network ", WIFI_SSID); 
   while (!WiFly.join(WIFI_SSID, WIFI_PASSPHRASE, true)) {
     //say ("retry join"); 
     delay(3000);  // try again after 3 seconds;
@@ -339,19 +339,27 @@ void printStatus() {
 }
 
 
-void advanceValve() {
+void stopValves() {
+    putPachubeData (1, valveOn);
+    valveOn = 0;
+    trigger = 0;
+    commitValves();
+}
+
+
+void advanceValves() {
   putPachubeData (1, valveOn);
 
   do {
     ++valveOn;
-  } while (valveOn <= VALVE_COUNT && !get_valveDuration(valveOn-1));
+  } while (valveOn <= VALVE_COUNT && !get_valveDuration (valveOn-1));
 
   if (valveOn > VALVE_COUNT) {
     valveOn = 0;
     trigger = 0;
   }
   else
-    advance = now() + get_valveDuration(valveOn-1) * SECS_PER_MIN;
+    advance = now() + get_valveDuration (valveOn-1) * SECS_PER_MIN;
 
   commitValves();
 }
@@ -372,6 +380,8 @@ void sendIndex (
     client << F("<br>");
   }
   client << F("<input type='hidden' name='h' /><input type='submit' value='Submit' /></form>");
+  client << F("<form action='advance'><input type='submit' value='Advance' /></form>");
+  client << F("<form action='stop'><input type='submit' value='Stop' /></form>");
 }
 
 
@@ -411,8 +421,13 @@ void loop() {
         }
       }
     }
-    if (!strcmp (method, "GET"))
+    if (!strcmp (method, "GET")) {
+      if (!strcmp (resource, "/advance?"))
+        advanceValves();
+      else if (!strcmp (resource, "/stop?")) 
+        stopValves();
       sendIndex (client);
+    }
     else if (!strcmp (method, "POST")) {
       //  xx=yy&
       do {
@@ -442,7 +457,7 @@ void loop() {
     client.stop();
     //say ("client stopped");
   }
-  else if (!valveOn && (!last_weather_check || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL))) {
+  else if (!valveOn && (!last_weather_check  || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL))) {
     checkWeather();
     last_weather_check = millis();
   }
@@ -452,7 +467,7 @@ void loop() {
   }
   else if ((!valveOn && trigger && trigger < now()) ||  // valves are off, but it's time to start, or
            ( valveOn && advance < now())) {             // a valve has been running for long enough
-    advanceValve();
+    advanceValves();
   }
   else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL) {
     printStatus();
