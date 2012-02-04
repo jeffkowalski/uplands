@@ -1,6 +1,7 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2; -*- */
 #include <MemoryFree.h>
 #include <LiquidCrystal.h>
-#include <WiFly.h>
+#include <WiFly.h>  // from https://github.com/jcrouchley/WiFly-Shield
 #include <Time.h>
 #include <Streaming.h>
 #include <EEPROM.h>
@@ -8,7 +9,8 @@
 
 #define WEATHER_UPDATE_INTERVAL  (15L * 60L * 1000L)
 #define CALENDAR_UPDATE_INTERVAL ( 1L * 60L * 1000L)
-#define STATUS_UPDATE_INTERVAL    500L
+#define STATUS_UPDATE_INTERVAL                 500L
+#define TIME_SYNC_INTERVAL       ( 5L * 60L * 1000L)
 
 #define SER_PIN   2  // pin 14 on the 75HC595
 #define RCLK_PIN  3  // pin 12 on the 75HC595
@@ -32,6 +34,7 @@ static LiquidCrystal        lcd (8,9,4,5,6,7);
 static unsigned long        last_weather_check  = 0;
 static unsigned long        last_status_print   = 0;
 static unsigned long        last_calendar_check = 0;
+static unsigned long        last_time_sync      = 0;
 static time_t               trigger = 0;
 static time_t               advance = 0;
 static int                  pop = 0;
@@ -85,7 +88,7 @@ void set_valveName (int index, char * name) {
 }
 
 
-static void say (
+void say (
   char const * const line1,
   char const * const line2 = 0) {
   if (line1) {
@@ -101,8 +104,9 @@ static void say (
 }
 
 
-static time_t getTime() {
-  return WiFly.getTime();
+static void syncTime() {
+  setTime(WiFly.getTime());
+  last_time_sync = millis();
 }
 
 
@@ -140,6 +144,7 @@ static void putData (
     client << data << endl;
     delay (300);
     client.stop();
+    delay(1000);
   } 
 }
 
@@ -168,25 +173,33 @@ void commitValves() {
 
 
 void setup() {
-#if SSER
+  lcd.begin(16, 2);
+
   Serial.begin(9600);
+#if SSER
   LOG("Starting");
   WiFlySerial.begin(9600);
   WiFly.setUart(&WiFlySerial);
 #else
-  Serial.begin(9600);
   WiFly.setUart(&Serial);
 #endif
 
-  lcd.begin(16, 2);
   say ("flud.");
 
-  WiFly.begin();
-  say ("joining network ", WIFI_SSID); 
+  if (!WiFly.begin()) {
+    say ("can't start");
+    while (1) {};
+  }
+  //say ("joining network ", WIFI_SSID); 
   while (!WiFly.join(WIFI_SSID, WIFI_PASSPHRASE, true)) {
-    //say ("retry join"); 
+    say ("retry join");
     delay(3000);  // try again after 3 seconds;
   }
+
+  do {
+    delay (1000); 
+    syncTime();
+  } while (now() < TIME_SYNC_INTERVAL);
 
   //say ("resetting valves")
   pinMode (SER_PIN,   OUTPUT);
@@ -196,9 +209,7 @@ void setup() {
   commitValves();
 
   //say ("starting server"); 
-  delay(3000);
   server.begin();
-  setSyncProvider (getTime);
   //say ("server ready", WiFly.ip());
 }
 
@@ -270,6 +281,7 @@ static void getData (
     getResponse (client, target, terminal, response, response_len);
 
     client.stop();
+    delay(1000);
   }
 }
 
@@ -302,6 +314,7 @@ void checkCalendar() {
                              ((cal[27] - '0') * 10 + (cal[28] - '0')) * SECS_PER_MIN);
     trigger = (long)makeTime(te) - zone;
   }
+  last_calendar_check = millis();
 }
 
 
@@ -312,6 +325,7 @@ void checkWeather() {
            "\"pop\":", ',', popbuf, sizeof(popbuf));
   pop = atoi(popbuf);
   putPachubeData (0, pop);
+  last_weather_check = millis();
 }
 
 
@@ -336,6 +350,7 @@ void printStatus() {
               freeMemory());
   line[sizeof(line)-1] = '\0';
   say (timestamp(now())+5, line);
+  last_status_print = millis();
 }
 
 
@@ -457,21 +472,16 @@ void loop() {
     client.stop();
     //say ("client stopped");
   }
-  else if (!valveOn && (!last_weather_check  || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL))) {
+  else if (!last_time_sync    || (millis() - last_time_sync > TIME_SYNC_INTERVAL))
+    syncTime();
+  else if  (!valveOn && (!last_weather_check  || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL)))
     checkWeather();
-    last_weather_check = millis();
-  }
-  else if (!valveOn && (!last_calendar_check || (millis() - last_calendar_check > CALENDAR_UPDATE_INTERVAL))) {
+  else if  (!valveOn && (!last_calendar_check || (millis() - last_calendar_check > CALENDAR_UPDATE_INTERVAL)))
     checkCalendar();
-    last_calendar_check = millis();
-  }
   else if ((!valveOn && trigger && trigger < now()) ||  // valves are off, but it's time to start, or
-           ( valveOn && advance < now())) {             // a valve has been running for long enough
+           ( valveOn && advance < now()))               // a valve has been running for long enough
     advanceValves();
-  }
-  else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL) {
+  else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL)
     printStatus();
-    last_status_print = millis();
-  }
 }
 
