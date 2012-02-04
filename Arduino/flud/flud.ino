@@ -7,44 +7,31 @@
 #include <EEPROM.h>
 #include "Credentials.h"
 
-#define WEATHER_UPDATE_INTERVAL  (15L * 60L * 1000L)
-#define CALENDAR_UPDATE_INTERVAL ( 1L * 60L * 1000L)
-#define STATUS_UPDATE_INTERVAL                 500L
-#define TIME_SYNC_INTERVAL       ( 5L * 60L * 1000L)
+#define WEATHER_UPDATE_INTERVAL  (15L * 60L * 1000L) // millis
+#define CALENDAR_UPDATE_INTERVAL ( 1L * 60L * 1000L) // millis
+#define STATUS_UPDATE_INTERVAL                 500L  // millis
+#define TIME_SYNC_INTERVAL       ( 5L * 60L * 1000L) // millis
 
-#define SER_PIN   2  // pin 14 on the 75HC595
-#define RCLK_PIN  3  // pin 12 on the 75HC595
-#define SRCLK_PIN 11 // pin 11 on the 75HC595
+#define SER_PIN              2 // pin 14 on the 75HC595
+#define RCLK_PIN             3 // pin 12 on the 75HC595
+#define SRCLK_PIN           11 // pin 11 on the 75HC595
 
-#define SSER 0
+#define VALVE_COUNT          8
+#define VALVE_NAME_SIZE     16
 
-#if SSER
-  #include <SoftwareSerial.h>
-  #define LOG Serial.println
-  #define LOGX Serial.print
-  static SoftwareSerial     WiFlySerial(2, 3);  // rx, tx
-#else
-  #define LOG (void)
-  #define LOGX (void)
-#endif
-
-#define VALVE_COUNT         8
-
-static LiquidCrystal        lcd (8,9,4,5,6,7);
 static unsigned long        last_weather_check  = 0;
 static unsigned long        last_status_print   = 0;
 static unsigned long        last_calendar_check = 0;
 static unsigned long        last_time_sync      = 0;
-static time_t               trigger = 0;
-static time_t               advance = 0;
-static int                  pop = 0;
+static int                  pop                 = 0;
+static time_t               trigger             = 0;
+static int                  valveOn             = 0;
+static LiquidCrystal        lcd (8,9,4,5,6,7);
 static WiFlyServer          server(80);
 static WiFlyClient          wundergroundClient("api.wunderground.com", 80);
 static WiFlyClient          pachubeClient("api.pachube.com", 80);
 static WiFlyClient          googleClient("www.google.com", 80);
-static int                  valveOn = 0;
 
-#define VALVE_NAME_SIZE     16
 struct EEPROMSettings {
   int                       valveDuration[VALVE_COUNT];
   char                      valveName[VALVE_COUNT][VALVE_NAME_SIZE];
@@ -92,14 +79,12 @@ void say (
   char const * const line1,
   char const * const line2 = 0) {
   if (line1) {
-    lcd.clear(); 
+    lcd.clear();
     lcd.print(line1);
-    LOG(line1);
   }
   if (line2) {
     lcd.setCursor(0,1);
     lcd.print(line2);
-    LOG(line2);
   }
 }
 
@@ -111,17 +96,17 @@ static void syncTime() {
 
 
 static char const * timestamp (time_t t) {
-    static char datetime[21]; // yyyy-mm-ddThh:mm:ssZ  
-                              // 12345678901234567890
-    snprintf (datetime, sizeof(datetime), 
-              "%04d-%02d-%02dT%02d:%02d:%02dZ", year(t), month(t), day(t), hour(t), minute(t), second(t));
-    return datetime;
+  static char datetime[21]; // yyyy-mm-ddThh:mm:ssZ
+                            // 12345678901234567890
+  snprintf (datetime, sizeof(datetime),
+            "%04d-%02d-%02dT%02d:%02d:%02dZ", year(t), month(t), day(t), hour(t), minute(t), second(t));
+  return datetime;
 }
 
 
 static void putData (
   WiFlyClient &         client,
-  char const  * const   resource, 
+  char const  * const   resource,
   char const  * const   headers,
   char const  *         data) {
 
@@ -145,18 +130,18 @@ static void putData (
     delay (300);
     client.stop();
     delay(1000);
-  } 
+  }
 }
 
 
 void putPachubeData (int stream, int value) {
-    char request[sizeof("/v2/feeds/" PACHUBE_FEED "/datastreams/0")];
-    snprintf (request, sizeof(request), "/v2/feeds/%s/datastreams/%d", PACHUBE_FEED, stream);
-    request[sizeof(request)-1] = '\0';
-    char data[6];
-    snprintf (data, sizeof(data), "%d", value);
-    data[sizeof(data)-1] = '\0';
-    putData (pachubeClient, request, "X-PachubeApiKey: " PACHUBE_APIKEY "\r\nContent-Type: text/csv", data);
+  char request[sizeof("/v2/feeds/" PACHUBE_FEED "/datastreams/0")];
+  snprintf (request, sizeof(request), "/v2/feeds/%s/datastreams/%d", PACHUBE_FEED, stream);
+  request[sizeof(request)-1] = '\0';
+  char data[6];
+  snprintf (data, sizeof(data), "%d", value);
+  data[sizeof(data)-1] = '\0';
+  putData (pachubeClient, request, "X-PachubeApiKey: " PACHUBE_APIKEY "\r\nContent-Type: text/csv", data);
 }
 
 
@@ -176,13 +161,7 @@ void setup() {
   lcd.begin(16, 2);
 
   Serial.begin(9600);
-#if SSER
-  LOG("Starting");
-  WiFlySerial.begin(9600);
-  WiFly.setUart(&WiFlySerial);
-#else
   WiFly.setUart(&Serial);
-#endif
 
   say ("flud.");
 
@@ -190,14 +169,14 @@ void setup() {
     say ("can't start");
     while (1) {};
   }
-  //say ("joining network ", WIFI_SSID); 
+  //say ("joining network ", WIFI_SSID);
   while (!WiFly.join(WIFI_SSID, WIFI_PASSPHRASE, true)) {
     say ("retry join");
     delay(3000);  // try again after 3 seconds;
   }
 
   do {
-    delay (1000); 
+    delay (1000);
     syncTime();
   } while (now() < TIME_SYNC_INTERVAL);
 
@@ -208,7 +187,7 @@ void setup() {
   valveOn = 0;
   commitValves();
 
-  //say ("starting server"); 
+  //say ("starting server");
   server.begin();
   //say ("server ready", WiFly.ip());
 }
@@ -216,12 +195,12 @@ void setup() {
 
 static void getResponse (
   WiFlyClient &         client,
-  char const  *         target, 
-  char                  terminal, 
-  char        *         response, 
+  char const  *         target,
+  char                  terminal,
+  char        *         response,
   int                   response_len) {
   unsigned long         timeout = millis() + 20 * 1000;
-  
+
   //say ("parsing");
   int target_len = strlen(target);
   char const * try_target = target;
@@ -231,7 +210,6 @@ static void getResponse (
     if (millis() > timeout) break;
     while (client.available() && response_len > 0) {
       char c = client.read();
-      LOGX(c);
 
       if (try_target_len) {
         if (c == *try_target) {
@@ -258,11 +236,11 @@ static void getResponse (
 
 
 static void getData (
-  WiFlyClient &         client, 
-  char const  *         resource, 
-  char const  *         target, 
-  char                  terminal, 
-  char        *         response, 
+  WiFlyClient &         client,
+  char const  *         resource,
+  char const  *         target,
+  char                  terminal,
+  char        *         response,
   int                   response_len) {
 
   if (!client.connected()) {
@@ -272,12 +250,11 @@ static void getData (
 
   if (client.connected()) {
     //say ("requesting", resource);
-    LOG(resource);
     client << F("GET ") << resource << F(" HTTP/1.1") << endl;
     client << F("Host: ") << client._domain << endl;
     client << F("Connection: close") << endl;
     client << endl;
-    
+
     getResponse (client, target, terminal, response, response_len);
 
     client.stop();
@@ -300,7 +277,7 @@ void checkCalendar() {
   getData (googleClient, resource, "startTime='", '\'', cal, sizeof(cal));
   trigger = 0;
   if (cal[0]) {
-    //yyyy-mm-ddThh:mm:ss.000-ZZ:ZZ  
+    //yyyy-mm-ddThh:mm:ss.000-ZZ:ZZ
     //01234567890123456789012345678
     TimeElements te;
     te.Year   = (cal[0]  - '0') * 1000 + (cal[1] - '0') * 100 + (cal[2] - '0') * 10 + (cal[3] - '0') - 1970;
@@ -309,8 +286,8 @@ void checkCalendar() {
     te.Hour   = (cal[11] - '0') * 10 + (cal[12] - '0');
     te.Minute = (cal[14] - '0') * 10 + (cal[15] - '0');
     te.Second = (cal[17] - '0') * 10 + (cal[18] - '0');
-    long zone = (cal[23] == '-' ? -1L : 1L) * 
-                            (((cal[24] - '0') * 10 + (cal[25] - '0')) * SECS_PER_HOUR + 
+    long zone = (cal[23] == '-' ? -1L : 1L) *
+                            (((cal[24] - '0') * 10 + (cal[25] - '0')) * SECS_PER_HOUR +
                              ((cal[27] - '0') * 10 + (cal[28] - '0')) * SECS_PER_MIN);
     trigger = (long)makeTime(te) - zone;
   }
@@ -321,7 +298,7 @@ void checkCalendar() {
 void checkWeather() {
   //say ("weather");
   char popbuf[4];
-  getData (wundergroundClient, "/api/" WUNDERGROUND_APIKEY "/forecast/q/94705.json", 
+  getData (wundergroundClient, "/api/" WUNDERGROUND_APIKEY "/forecast/q/94705.json",
            "\"pop\":", ',', popbuf, sizeof(popbuf));
   pop = atoi(popbuf);
   putPachubeData (0, pop);
@@ -332,21 +309,21 @@ void checkWeather() {
 void printStatus() {
   char      line[17];
   time_t    current = now();
-  if (valveOn && advance > current)
-    snprintf (line, sizeof(line), 
-              "v%d %02ld:%02ld  %db", valveOn, 
-              (advance - current) / SECS_PER_MIN, 
-              (advance - current) % SECS_PER_MIN, 
+  if (valveOn)
+    snprintf (line, sizeof(line),
+              "v%d %02ld:%02ld  %db", valveOn,
+              (trigger - current) / SECS_PER_MIN,
+              (trigger - current) % SECS_PER_MIN,
               freeMemory());
   else if (trigger > current)
-    snprintf (line, sizeof(line), 
-              "%d%% %02ld:%02ld  %db", pop, 
+    snprintf (line, sizeof(line),
+              "%d%% %02ld:%02ld  %db", pop,
               (trigger - current) / SECS_PER_MIN,
               (trigger - current) % SECS_PER_MIN,
               freeMemory());
   else
-    snprintf (line, sizeof(line), 
-              "%d%%  %db", pop, 
+    snprintf (line, sizeof(line),
+              "%d%%  %db", pop,
               freeMemory());
   line[sizeof(line)-1] = '\0';
   say (timestamp(now())+5, line);
@@ -355,10 +332,10 @@ void printStatus() {
 
 
 void stopValves() {
-    putPachubeData (1, valveOn);
-    valveOn = 0;
-    trigger = 0;
-    commitValves();
+  putPachubeData (1, valveOn);
+  valveOn = 0;
+  trigger = 0;
+  commitValves();
 }
 
 
@@ -374,7 +351,7 @@ void advanceValves() {
     trigger = 0;
   }
   else
-    advance = now() + get_valveDuration (valveOn-1) * SECS_PER_MIN;
+    trigger = now() + get_valveDuration (valveOn-1) * SECS_PER_MIN;
 
   commitValves();
 }
@@ -429,7 +406,7 @@ void loop() {
         if (c == '\n') {
           // we're starting a new line
           current_line_is_blank = true;
-        } 
+        }
         else if (c != '\r') {
           // we've gotten a character on the current line
           current_line_is_blank = false;
@@ -439,7 +416,7 @@ void loop() {
     if (!strcmp (method, "GET")) {
       if (!strcmp (resource, "/advance?"))
         advanceValves();
-      else if (!strcmp (resource, "/stop?")) 
+      else if (!strcmp (resource, "/stop?"))
         stopValves();
       sendIndex (client);
     }
@@ -447,7 +424,7 @@ void loop() {
       //  xx=yy&
       do {
         getResponse (client, "", '=', resource, sizeof(resource));
-        if (!strcmp(resource, "h")) 
+        if (!strcmp(resource, "h"))
           break;
         else {
           int index = atoi(&resource[1]);
@@ -459,13 +436,13 @@ void loop() {
             getResponse (client, "", '&', resource, sizeof(resource));
             set_valveDuration (index, atoi(resource));
           }
-          else 
+          else
             break;
         }
       } while (resource[0]);
       sendIndex (client);
     }
-    else 
+    else
       send404 (client);
     // give the web browser time to receive the data
     delay(100);
@@ -474,14 +451,12 @@ void loop() {
   }
   else if (!last_time_sync    || (millis() - last_time_sync > TIME_SYNC_INTERVAL))
     syncTime();
-  else if  (!valveOn && (!last_weather_check  || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL)))
+  else if (!valveOn && (!last_weather_check  || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL)))
     checkWeather();
-  else if  (!valveOn && (!last_calendar_check || (millis() - last_calendar_check > CALENDAR_UPDATE_INTERVAL)))
+  else if (!valveOn && (!last_calendar_check || (millis() - last_calendar_check > CALENDAR_UPDATE_INTERVAL)))
     checkCalendar();
-  else if ((!valveOn && trigger && trigger < now()) ||  // valves are off, but it's time to start, or
-           ( valveOn && advance < now()))               // a valve has been running for long enough
+  else if (trigger && trigger < now())
     advanceValves();
   else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL)
     printStatus();
 }
-
