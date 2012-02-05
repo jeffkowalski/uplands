@@ -37,7 +37,7 @@ struct EEPROMSettings {
   char                      valveName[VALVE_COUNT][VALVE_NAME_SIZE];
 };
 
-int get_valveDuration (int index) {
+static int get_valveDuration (int index) {
   int  retval = 0;
   if (index < VALVE_COUNT) {
     byte * bytes = (byte *)&retval;
@@ -47,7 +47,7 @@ int get_valveDuration (int index) {
   }
   return retval;
 }
-void set_valveDuration (int index, int time) {
+static void set_valveDuration (int index, int time) {
   if (index < VALVE_COUNT) {
     byte * bytes = (byte *)&time;
     EEPROMSettings * settings = 0;
@@ -55,7 +55,7 @@ void set_valveDuration (int index, int time) {
       EEPROM.write ((int)&settings->valveDuration[index] - (int)settings + ii, bytes[ii]);
   }
 }
-char * get_valveName (int index, char * name, int name_len) {
+static char * get_valveName (int index, char * name, int name_len) {
   if (index < VALVE_COUNT) {
     EEPROMSettings * settings = 0;
     for (int ii = 0; ii < name_len; ++ii)
@@ -64,7 +64,7 @@ char * get_valveName (int index, char * name, int name_len) {
   name[name_len-1] = '\0';
   return name;
 }
-void set_valveName (int index, char * name) {
+static void set_valveName (int index, char * name) {
   if (index < VALVE_COUNT) {
     EEPROMSettings * settings = 0;
     for (unsigned int ii = 0; ii < sizeof(settings->valveName[ii]); ++ii) {
@@ -90,7 +90,8 @@ void say (
 
 
 static void syncTime() {
-  setTime(WiFly.getTime());
+  say ("sync time");
+  setTime (WiFly.getTime());
   last_time_sync = millis();
 }
 
@@ -111,12 +112,12 @@ static void putData (
   char const  *         data) {
 
   if (!client.connected()) {
-    say (client._domain);
+    say (client._domain, "connecting");
     client.connect();
   }
 
   if (client.connected()) {
-    //say ("putting", resource);
+    say (client._domain, "putting");
     client << F("PUT ") << resource << F(" HTTP/1.1") << endl;
     client << F("Host: ") << client._domain << endl;
     if (headers && headers[0])
@@ -128,13 +129,13 @@ static void putData (
     // here's the actual content of the PUT request:
     client << data << endl;
     delay (300);
+    say (client._domain, "done");
     client.stop();
-    delay(1000);
   }
 }
 
 
-void putPachubeData (int stream, int value) {
+static void putPachubeData (int stream, int value) {
   char request[sizeof("/v2/feeds/" PACHUBE_FEED "/datastreams/0")];
   snprintf (request, sizeof(request), "/v2/feeds/%s/datastreams/%d", PACHUBE_FEED, stream);
   request[sizeof(request)-1] = '\0';
@@ -145,7 +146,7 @@ void putPachubeData (int stream, int value) {
 }
 
 
-void commitValves() {
+static void commitValves() {
   digitalWrite (RCLK_PIN, LOW);
   for (int ii = VALVE_COUNT; ii > 0; --ii) {
     digitalWrite (SRCLK_PIN, LOW);
@@ -157,81 +158,18 @@ void commitValves() {
 }
 
 
-void setup() {
-  lcd.begin(16, 2);
-
-  Serial.begin(9600);
-  WiFly.setUart(&Serial);
-
-  say ("flud.");
-
-  if (!WiFly.begin()) {
-    say ("can't start");
-    while (1) {};
-  }
-  //say ("joining network ", WIFI_SSID);
-  while (!WiFly.join(WIFI_SSID, WIFI_PASSPHRASE, true)) {
-    say ("retry join");
-    delay(3000);  // try again after 3 seconds;
-  }
-
-  do {
-    delay (1000);
-    syncTime();
-  } while (now() < TIME_SYNC_INTERVAL);
-
-  //say ("resetting valves")
-  pinMode (SER_PIN,   OUTPUT);
-  pinMode (RCLK_PIN,  OUTPUT);
-  pinMode (SRCLK_PIN, OUTPUT);
-  valveOn = 0;
-  commitValves();
-
-  //say ("starting server");
-  server.begin();
-  //say ("server ready", WiFly.ip());
-}
-
-
 static void getResponse (
   WiFlyClient &         client,
   char const  *         target,
-  char                  terminal,
+  char                  terminator,
   char        *         response,
   int                   response_len) {
-  unsigned long         timeout = millis() + 20 * 1000;
 
   //say ("parsing");
-  int target_len = strlen(target);
-  char const * try_target = target;
-  int try_target_len = target_len;
-  --response_len;
-  while (client.connected() && response_len > 0) {
-    if (millis() > timeout) break;
-    while (client.available() && response_len > 0) {
-      char c = client.read();
-
-      if (try_target_len) {
-        if (c == *try_target) {
-          ++try_target;
-          --try_target_len;
-        }
-        else {
-          try_target = target;
-          try_target_len = target_len;
-        }
-      }
-
-      else if (c != terminal) {
-        *response++ = c;
-        --response_len;
-      }
-
-      else //c == terminal
-        response_len = 0;
-    }
+  if (client.find ((char *)target) && response_len > 0) {
+    int read = client.readBytesUntil (terminator, response, response_len);
+    response[read] = '\0';
   }
-  *response = '\0';
 }
 
 
@@ -244,27 +182,27 @@ static void getData (
   int                   response_len) {
 
   if (!client.connected()) {
-    say (client._domain);
+    say (client._domain, "connecting");
     client.connect();
   }
-
   if (client.connected()) {
-    //say ("requesting", resource);
+    say (client._domain, "requesting");
     client << F("GET ") << resource << F(" HTTP/1.1") << endl;
     client << F("Host: ") << client._domain << endl;
     client << F("Connection: close") << endl;
     client << endl;
 
+    say (client._domain, "receiving");
     getResponse (client, target, terminal, response, response_len);
 
+    say (client._domain, "done");
     client.stop();
-    delay(1000);
   }
 }
 
 
 // find trigger in calendar from now to one hour from now, or -1 if none
-void checkCalendar() {
+static void checkCalendar() {
   //say ("calendar");
   char cal[32];
   cal[0] = '\0';
@@ -295,7 +233,7 @@ void checkCalendar() {
 }
 
 
-void checkWeather() {
+static void checkWeather() {
   //say ("weather");
   char popbuf[4];
   getData (wundergroundClient, "/api/" WUNDERGROUND_APIKEY "/forecast/q/94705.json",
@@ -306,7 +244,7 @@ void checkWeather() {
 }
 
 
-void printStatus() {
+static void printStatus() {
   char      line[17];
   time_t    current = now();
   if (valveOn)
@@ -331,7 +269,7 @@ void printStatus() {
 }
 
 
-void stopValves() {
+static void stopValves() {
   putPachubeData (1, valveOn);
   valveOn = 0;
   trigger = 0;
@@ -339,7 +277,7 @@ void stopValves() {
 }
 
 
-void advanceValves() {
+static void advanceValves() {
   putPachubeData (1, valveOn);
 
   do {
@@ -357,98 +295,144 @@ void advanceValves() {
 }
 
 
-void sendIndex (
+static void sendIndex (
   WiFlyClient &client) {
   client << F("HTTP/1.1 200 OK") << endl;
   client << F("Content-Type: text/html") << endl << endl;
   client << F("millis = ") << millis() << F("<br>");
   client << F("time = ") << timestamp(now()) << F("<br>");
   client << F("pop = ") << pop << F("<br>");
-  client << "Valves <form method='POST'>";
+  client << F("Valves <form method='POST'>");
   for (int ii = 0; ii < VALVE_COUNT; ++ii) {
     char name[VALVE_NAME_SIZE];
-    client << F("<input type='text' name='n") << ii << F("' value='") << get_valveName(ii, name, sizeof(name)) << F("' />");
-    client << F("<input type='text' name='d") << ii << F("' value='") << get_valveDuration(ii)                 << F("' />");
-    client << F("<br>");
+    client << F("<input type='") << F("text") << F("' name='")  << F("n") << ii << F("' value='") << get_valveName(ii, name, sizeof(name)) << F("' />") << endl;
+    client << F("<input type='") << F("text") << F("' name='")  << F("d") << ii << F("' value='") << get_valveDuration(ii)                 << F("' />") << endl;
+    if (ii + 1 == valveOn)
+      client << F("&lt;-- ON");
+    client << F("<br>") << endl;
   }
-  client << F("<input type='hidden' name='h' /><input type='submit' value='Submit' /></form>");
-  client << F("<form action='advance'><input type='submit' value='Advance' /></form>");
-  client << F("<form action='stop'><input type='submit' value='Stop' /></form>");
+  client << F("<input type='") << F("hidden") << F("' name='")  << F("h") << F("' />") << 
+            F("<input type='") << F("submit") << F("' value='") << F("Submit")  << F("' />") << F("</form>") << endl;
+  client << F("<form action='") << F("advance") << F("'>") << 
+            F("<input type='") << F("submit") << F("' value='") << F("Advance") << F("' />") << F("</form>") << endl;
+  client << F("<form action='") << F("stop")    << F("'>") << 
+            F("<input type='") << F("submit") << F("' value='") << F("Stop")    << F("' />") << F("</form>") << endl;
+  delay(1000);
+  client.stop();
+  delay(100);
 }
 
 
-void send404 (
+static void send404 (
   WiFlyClient &client) {
   client << F("HTTP/1.1 404 NOT FOUND") << endl << endl;
+  client.stop();
+}
+
+
+static void processClient (
+  WiFlyClient & client) {
+  char          method[5];
+  char          resource[32];
+
+  say ("client active");
+  getResponse (client, "", ' ', method, sizeof(method));
+  if (!strcmp (method, "GET"))
+    getResponse (client, "", ' ', resource, sizeof(resource));
+
+  // an http request ends with a blank line
+  boolean current_line_is_blank = true;
+  while (client.connected()) {
+    if (client.available()) {
+      char c = client.read();
+      // if we've gotten to the end of the line (received a newline
+      // character) and the line is blank, the http request has ended,
+      // so we can send a reply
+      if (c == '\n' && current_line_is_blank)
+        break;
+      if (c == '\n')      // we're starting a new line
+        current_line_is_blank = true;
+      else if (c != '\r') // we've gotten a character on the current line
+        current_line_is_blank = false;
+    }
+  }
+  
+  if (!strcmp (method, "GET")) {
+    sendIndex (client);
+    if (!strcmp (resource, "/advance?"))
+      advanceValves();
+    else if (!strcmp (resource, "/stop?"))
+      stopValves();
+  }
+  else if (!strcmp (method, "POST")) {
+    //  xx=yy&
+    do {
+      getResponse (client, "", '=', resource, sizeof(resource));
+      if (!strcmp(resource, "h"))
+        break;
+      else {
+        int index = atoi(&resource[1]);
+        if (resource[0] == 'n') {
+          getResponse (client, "", '&', resource, sizeof(resource));
+          set_valveName (index, resource);
+        }
+        else if (resource[0] == 'd') {
+          getResponse (client, "", '&', resource, sizeof(resource));
+          set_valveDuration (index, atoi(resource));
+        }
+        else
+          break;
+      }
+    } while (resource[0]);
+    sendIndex (client);
+  }
+  else
+    send404 (client);
+}
+
+
+void setup() {
+  lcd.begin(16, 2);
+
+  Serial.begin(9600);
+  WiFly.setUart(&Serial);
+
+  say ("flud.");
+
+#if 0
+  if (!WiFly.begin()) {
+    say ("can't start");
+    while (1) {};
+  }
+  //say ("joining network ", WIFI_SSID);
+  while (!WiFly.join(WIFI_SSID, WIFI_PASSPHRASE, true)) {
+    say ("retry join");
+    delay(3000);  // try again after 3 seconds;
+  }
+#endif
+
+  do {
+    delay (1000);
+    syncTime();
+  } while (now() < TIME_SYNC_INTERVAL);
+
+  //say ("resetting valves")
+  pinMode (SER_PIN,   OUTPUT);
+  pinMode (RCLK_PIN,  OUTPUT);
+  pinMode (SRCLK_PIN, OUTPUT);
+  valveOn = 0;
+  commitValves();
+
+  //say ("starting server");
+  server.begin();
+  //say ("server ready", WiFly.ip());
 }
 
 
 void loop() {
   WiFlyClient client = server.available();
-  if (client) {
-    char method[5];
-    char resource[32];
-    getResponse (client, "", ' ', method, sizeof(method));
-    if (!strcmp (method, "GET"))
-      getResponse (client, "", ' ', resource, sizeof(resource));
-    //say ("client active");
-    // an http request ends with a blank line
-    boolean current_line_is_blank = true;
-    while (client.connected()) {
-      if (client.available()) {
-        char c = client.read();
-        // if we've gotten to the end of the line (received a newline
-        // character) and the line is blank, the http request has ended,
-        // so we can send a reply
-        if (c == '\n' && current_line_is_blank) {
-          break;
-        }
-        if (c == '\n') {
-          // we're starting a new line
-          current_line_is_blank = true;
-        }
-        else if (c != '\r') {
-          // we've gotten a character on the current line
-          current_line_is_blank = false;
-        }
-      }
-    }
-    if (!strcmp (method, "GET")) {
-      if (!strcmp (resource, "/advance?"))
-        advanceValves();
-      else if (!strcmp (resource, "/stop?"))
-        stopValves();
-      sendIndex (client);
-    }
-    else if (!strcmp (method, "POST")) {
-      //  xx=yy&
-      do {
-        getResponse (client, "", '=', resource, sizeof(resource));
-        if (!strcmp(resource, "h"))
-          break;
-        else {
-          int index = atoi(&resource[1]);
-          if (resource[0] == 'n') {
-            getResponse (client, "", '&', resource, sizeof(resource));
-            set_valveName (index, resource);
-          }
-          else if (resource[0] == 'd') {
-            getResponse (client, "", '&', resource, sizeof(resource));
-            set_valveDuration (index, atoi(resource));
-          }
-          else
-            break;
-        }
-      } while (resource[0]);
-      sendIndex (client);
-    }
-    else
-      send404 (client);
-    // give the web browser time to receive the data
-    delay(100);
-    client.stop();
-    //say ("client stopped");
-  }
+  if (client)
+    processClient (client);
   else if (!last_time_sync    || (millis() - last_time_sync > TIME_SYNC_INTERVAL))
     syncTime();
   else if (!valveOn && (!last_weather_check  || (millis() - last_weather_check > WEATHER_UPDATE_INTERVAL)))
@@ -460,3 +444,4 @@ void loop() {
   else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL)
     printStatus();
 }
+
