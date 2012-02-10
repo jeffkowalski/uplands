@@ -18,7 +18,7 @@
 #
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL yTHE
 # AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
@@ -60,7 +60,7 @@
 # You may also need to set SERIALDEV if it is not detected correctly.
 #
 # The presence of a .ino or .pde file causes the arduino.mk to atuomatically
-# determine va;ues for SOURCES, TARGET and LIBRARIES.  Any .c, .cc and .cpp
+# determine values for SOURCES, TARGET and LIBRARIES.  Any .c, .cc and .cpp
 # files in the project directory (or any "util" or "utility" subdirectoried)
 # are automatically included in the build and are scanned for Atduino libraries
 # that have been #included.
@@ -199,12 +199,13 @@ AVRDUDE := avrdude
 
 # flags
 CPPFLAGS = -Os -Wall -fno-exceptions -ffunction-sections -fdata-sections
+CPPFLAGS += -DARDUINO=100
 CPPFLAGS += -mmcu=$(BOARD_BUILD_MCU) -DF_CPU=$(BOARD_BUILD_FCPU)
 CPPFLAGS += -I. -Iutil -Iutility -I$(ARDUINOSRCDIR)
 CPPFLAGS += -I$(ARDUINODIR)/hardware/arduino/variants/$(BOARD_BUILD_VARIANT)/
 CPPFLAGS += $(addprefix -I$(ARDUINODIR)/libraries/, $(LIBRARIES))
 CPPFLAGS += $(patsubst %, -I$(ARDUINODIR)/libraries/%/utility, $(LIBRARIES))
-AVRDUDEFLAGS = -C $(ARDUINODIR)/hardware/tools/avrdude.conf -DV
+AVRDUDEFLAGS = -C $(ARDUINODIR)/hardware/tools/avr/etc/avrdude.conf -DV
 AVRDUDEFLAGS += -p $(BOARD_BUILD_MCU) -P $(SERIALDEV)
 AVRDUDEFLAGS += -c $(BOARD_UPLOAD_PROTOCOL) -b $(BOARD_UPLOAD_SPEED)
 LINKFLAGS = -Os -Wl,--gc-sections -mmcu=$(BOARD_BUILD_MCU)
@@ -226,7 +227,7 @@ upload:
 	@test -n "$(SERIALDEV)" || { \
 		echo "error: SERIALDEV could not be determined automatically." >&2; \
 		exit 1; }
-	stty -F $(SERIALDEV) hupcl
+#	stty -F $(SERIALDEV) hupcl
 	$(AVRDUDE) $(AVRDUDEFLAGS) -U flash:w:$(TARGET).hex:i
 
 clean:
