@@ -128,9 +128,10 @@ static void putData (
 
     // here's the actual content of the PUT request:
     client << data << endl;
-    delay (300);
     say (client._domain, "done");
+    delay(100);
     client.stop();
+    delay(100);
   }
 }
 
@@ -196,7 +197,9 @@ static void getData (
     getResponse (client, target, terminal, response, response_len);
 
     say (client._domain, "done");
+    delay(100);
     client.stop();
+    delay(100);
   }
 }
 
@@ -299,10 +302,10 @@ static void sendIndex (
   WiFlyClient &client) {
   client << F("HTTP/1.1 200 OK") << endl;
   client << F("Content-Type: text/html") << endl << endl;
-  client << F("millis = ") << millis() << F("<br>");
-  client << F("time = ") << timestamp(now()) << F("<br>");
-  client << F("pop = ") << pop << F("<br>");
-  client << F("Valves <form method='POST'>");
+  client << F("millis = ") << millis()         << F("<br>") << endl;
+  client << F("time = ")   << timestamp(now()) << F("<br>") << endl;
+  client << F("pop = ")    << pop              << F("<br>") << endl;
+  client << F("Valves <form method='POST'>") << endl;
   for (int ii = 0; ii < VALVE_COUNT; ++ii) {
     char name[VALVE_NAME_SIZE];
     client << F("<input type='") << F("text") << F("' name='")  << F("n") << ii << F("' value='") << get_valveName(ii, name, sizeof(name)) << F("' />") << endl;
@@ -311,13 +314,13 @@ static void sendIndex (
       client << F("&lt;-- ON");
     client << F("<br>") << endl;
   }
-  client << F("<input type='") << F("hidden") << F("' name='")  << F("h") << F("' />") << 
+  client << F("<input type='") << F("hidden") << F("' name='")  << F("h") << F("' />") <<
             F("<input type='") << F("submit") << F("' value='") << F("Submit")  << F("' />") << F("</form>") << endl;
-  client << F("<form action='") << F("advance") << F("'>") << 
+  client << F("<form action='") << F("advance") << F("'>") <<
             F("<input type='") << F("submit") << F("' value='") << F("Advance") << F("' />") << F("</form>") << endl;
-  client << F("<form action='") << F("stop")    << F("'>") << 
+  client << F("<form action='") << F("stop")    << F("'>") <<
             F("<input type='") << F("submit") << F("' value='") << F("Stop")    << F("' />") << F("</form>") << endl;
-  delay(1000);
+  delay(100);
   client.stop();
   delay(100);
 }
@@ -326,7 +329,9 @@ static void sendIndex (
 static void send404 (
   WiFlyClient &client) {
   client << F("HTTP/1.1 404 NOT FOUND") << endl << endl;
+  delay(100);
   client.stop();
+  delay(100);
 }
 
 
@@ -356,7 +361,7 @@ static void processClient (
         current_line_is_blank = false;
     }
   }
-  
+
   if (!strcmp (method, "GET")) {
     sendIndex (client);
     if (!strcmp (resource, "/advance?"))
@@ -441,7 +446,6 @@ void loop() {
     checkCalendar();
   else if (trigger && trigger < now())
     advanceValves();
-  else if (!last_status_print || (millis() - last_status_print) > STATUS_UPDATE_INTERVAL)
+  else if (!last_status_print || (millis() - last_status_print > STATUS_UPDATE_INTERVAL))
     printStatus();
 }
-
