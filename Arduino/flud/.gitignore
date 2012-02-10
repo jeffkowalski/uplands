@@ -1,2 +1,5 @@
 Credentials.h
 ignore/
+*.o
+*.a
+*.hex
