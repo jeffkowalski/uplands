@@ -119,6 +119,10 @@
 #_______________________________________________________________________________
 #
 
+ARDUINODIR:= C:/Users/Jeff/Documents/Arduino/arduino-1.0
+BOARD := uno
+SERIALDEV := com3
+
 # The full path to the arduino software, from arduino.cc
 ifndef ARDUINODIR
 ARDUINODIR := $(wildcard ~/opt/arduino)
