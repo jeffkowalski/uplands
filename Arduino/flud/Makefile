@@ -220,7 +220,7 @@ LINKFLAGS = -Os -Wl,--gc-sections -mmcu=$(BOARD_BUILD_MCU)
 #_______________________________________________________________________________
 #                                                                          RULES
 
-.PHONY:	all target upload clean boards monitor
+.PHONY:	all target upload clean boards monitor check-syntax
 
 all: target upload
 
@@ -233,6 +233,9 @@ upload:
 		exit 1; }
 #	stty -F $(SERIALDEV) hupcl
 	$(AVRDUDE) $(AVRDUDEFLAGS) -U flash:w:$(TARGET).hex:i
+
+check-syntax:
+	$(CC) -fsyntax-only  $(CHK_SOURCES)
 
 clean:
 	rm -f $(OBJECTS)
