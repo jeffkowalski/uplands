@@ -19,18 +19,12 @@ my $CALENDAR_UPDATE_INTERVAL = ( 1 * 60 * 1000); # millis
 my $STATUS_UPDATE_INTERVAL   =              500; # millis
 my $TIME_SYNC_INTERVAL       = ( 5 * 60 * 1000); # millis
 
-# Google calendar
-my $GOOGLE_FEED     = "l3rruvhvf2ljvfhm1m4n61pm7g";
-my $GOOGLE_PRIVATE  = "76afdddcfc61d8dcdfbc1fe408d4ee91";
-
-# Weather underground
-# http://api.wunderground.com/api/a9c5f7a00bf04843/forecast/q/94705.json
-my $WUNDERGROUND_APIKEY = "a9c5f7a00bf04843";
-
-# Cosm
-my $COSM_FEED    = "43762";
-my $COSM_APIKEY  = "hwn3eT8vkWjloTprSVXJ0G9d0RpEOynLTxn6LsGGpgg";
-
+use vars qw/$GOOGLE_FEED
+            $GOOGLE_PRIVATE
+            $WUNDERGROUND_APIKEY
+            $COSM_FEED
+            $COSM_APIKEY/;
+require 'credentials.pl' || die;
 
 my $last_weather_check  = 0;
 my $last_status_print   = 0;
@@ -182,7 +176,7 @@ threads->create(\&run_webserver);
 sub run_webserver {
     my $d = HTTP::Daemon->new(
                               ReuseAddr => 1,
-                              LocalAddr => '127.0.0.1',
+                              LocalAddr => 'raspberrypi.uplands',
                               LocalPort => 8888,
                               Listen    => 20
                              ) || die;
