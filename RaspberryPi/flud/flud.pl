@@ -10,6 +10,8 @@ use HTTP::Response;
 use threads;
 use threads::shared;
 use Thread::Semaphore;
+use Device::BCM2835;
+
 
 my $SECS_PER_MIN  = 60;
 my $SECS_PER_HOUR = 60 * 60;
@@ -34,19 +36,27 @@ my $last_time_sync      = 0;
 my $semaphore = new Thread::Semaphore;
 my $pop     :shared     = 0;
 my $trigger :shared     = 0;
-my $valveOn :shared     = 0;
+my $valveOn :shared     = 0;  # 1-based; 0 means "all off"
 my @valve   = ({name => "1", duration => 20},
-                       {name => "2", duration => 20},
-                       {name => "3", duration => 20},
-                       {name => "4", duration => 20},
-                       {name => "5", duration => 20},
-                       {name => "6", duration => 20},
-                       {name => "7", duration => 20},
-                       {name => "8", duration => 20});
+               {name => "2", duration => 20},
+               {name => "3", duration => 20},
+               {name => "4", duration => 20},
+               {name => "5", duration => 20},
+               {name => "6", duration => 20},
+               {name => "7", duration => 20},
+               {name => "8", duration => 20});
 
-#static LiquidCrystal        lcd (8,9,4,5,6,7);
+# Connect the shift register pins to these GPIO pins.
+my $shift_pin = &Device::BCM2835::RPI_GPIO_P1_11; # -> SH_CP 11 (shift clock)
+my $store_pin = &Device::BCM2835::RPI_GPIO_P1_13; # -> ST_CP 12 (storage clock)
+my $data_pin  = &Device::BCM2835::RPI_GPIO_P1_15; # -> DS    14 (data in)
+# connect rPi 2 5v  to VCC 16
+# connect rPi 6 GND to GND  8
+# connect rPi 6 GND to ~OE 13 (output enable, active low) to ground
+
 
 sub millis { return time * 1000; }
+
 
 sub timestamp {
     my ($time) = @_;
@@ -129,8 +139,9 @@ sub checkCalendar {
               "&start-max=" . timestamp(time + $SECS_PER_HOUR);
     $_ = HTTP::Tiny->new->get($url);
     if (/startTime='(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{3}([\+\-])(\d{2}):(\d{2})'/) {
-        my ($year, $mon, $mday, $hour, $min, $sec, $zone_sign, $zone_hour, $zone_min) = ($1, $2, $3, $4, $5, $6, $7, $8, $9);
-        $trigger = timegm ($sec,$min,$hour,$mday,$mon-1,$year-1900) -
+        my ($year, $mon, $mday, $hour, $min, $sec, $zone_sign, $zone_hour, $zone_min) =
+                ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+        $trigger = timegm ($sec, $min, $hour, $mday, $mon-1, $year-1900) -
                 (($zone_sign eq '-' ? -1 : 1) * ($zone_hour * $SECS_PER_HOUR + $zone_min * $SECS_PER_MIN));
     }
     $semaphore->up;
@@ -138,7 +149,36 @@ sub checkCalendar {
 }
 
 
-sub commitValves {}
+sub initValves {
+    # call set_debug(1) to do a non-destructive test on non-RPi hardware
+    Device::BCM2835::set_debug(1);
+    Device::BCM2835::init()
+              || die "Could not init library";
+
+    Device::BCM2835::gpio_fsel ($data_pin,
+                                &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
+    Device::BCM2835::gpio_fsel ($shift_pin,
+                                &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
+    Device::BCM2835::gpio_fsel ($store_pin,
+                                &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
+
+
+    Device::BCM2835::gpio_write ($data_pin,  0);
+    Device::BCM2835::gpio_write ($shift_pin, 0);
+    Device::BCM2835::gpio_write ($store_pin, 0);
+}
+
+
+sub commitValves {
+    Device::BCM2835::gpio_write ($store_pin, 0);
+    for (my $ii = 8; $ii > 0; --$ii) {
+        Device::BCM2835::gpio_write ($shift_pin, 0);
+        Device::BCM2835::gpio_write ($data_pin, $valveOn == $ii ? 1 : 0);
+        Device::BCM2835::gpio_write ($shift_pin, 1);
+    }
+    Device::BCM2835::gpio_write ($store_pin, 1);
+    putCosmData (1, $valveOn);
+}
 
 
 sub stopValves {
@@ -172,21 +212,22 @@ sub advanceValves {
 }
 
 
-threads->create(\&run_webserver);
 sub run_webserver {
-    my $d = HTTP::Daemon->new(
-                              ReuseAddr => 1,
-                              LocalAddr => 'raspberrypi.uplands',
-                              LocalPort => 8888,
-                              Listen    => 20
-                             ) || die;
+    my $sock = IO::Socket::INET->new (PeerAddr => "example.com",
+                                      PeerPort => 80,
+                                      Proto    => "tcp");
+    my $localip = $sock->sockhost;
+    my $d = HTTP::Daemon->new (ReuseAddr => 1,
+                               LocalAddr => $localip,
+                               LocalPort => 8888,
+                               Listen    => 20) || die;
 
     print "Web Server started!\n";
     print "Server Address: ", $d->sockhost(), "\n";
     print "Server Port: ",    $d->sockport(), "\n";
 
     while (my $c = $d->accept) {
-        threads->create(\&process_one_req, $c)->detach();
+        threads->create (\&process_one_req, $c)->detach();
     }
 }
 
@@ -194,7 +235,7 @@ sub run_webserver {
 sub send_index {
     my ($client) = @_;
     my $response = HTTP::Response->new(200);
-    $response->header("Content-Type" => "text/html");
+    $response->header ("Content-Type" => "text/html");
 
     my $body = join ('',
                      "time = ", time, "<br>",
@@ -249,6 +290,12 @@ sub process_one_req {
 
 
 say ("flud.");
+initValves();
+commitValves();
+
+threads->create(\&run_webserver);
+
+# FIXME: don't spin
 do {
     if (0) {}
     elsif (!$valveOn && (!$last_weather_check  || (millis() - $last_weather_check > $WEATHER_UPDATE_INTERVAL))) {
