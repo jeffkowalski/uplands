@@ -7,11 +7,12 @@ use HTTP::Tiny;
 use HTTP::Daemon;
 use HTTP::Status;
 use HTTP::Response;
+use HTML::Entities;
 use threads;
 use threads::shared;
 use Thread::Semaphore;
 use Device::BCM2835;
-
+use POSIX qw(uname);
 
 my $SECS_PER_MIN  = 60;
 my $SECS_PER_HOUR = 60 * 60;
@@ -37,14 +38,15 @@ my $semaphore = new Thread::Semaphore;
 my $pop     :shared     = 0;
 my $trigger :shared     = 0;
 my $valveOn :shared     = 0;  # 1-based; 0 means "all off"
-my @valve   = ({name => "1", duration => 20},
-               {name => "2", duration => 20},
-               {name => "3", duration => 20},
-               {name => "4", duration => 20},
-               {name => "5", duration => 20},
-               {name => "6", duration => 20},
-               {name => "7", duration => 20},
-               {name => "8", duration => 20});
+my $valve_specs :shared = &share([]);
+{
+    for (my $ii = 1; $ii <= 8; ++$ii) {
+        my $valve_spec = &share({});
+        $valve_spec->{name}     = "$ii";
+        $valve_spec->{duration} = 20;
+        push @$valve_specs, $valve_spec;
+    }
+}
 
 # Connect the shift register pins to these GPIO pins.
 my $shift_pin = &Device::BCM2835::RPI_GPIO_P1_11; # -> SH_CP 11 (shift clock)
@@ -151,7 +153,8 @@ sub checkCalendar {
 
 sub initValves {
     # call set_debug(1) to do a non-destructive test on non-RPi hardware
-    Device::BCM2835::set_debug(1);
+    my ($sysname, $nodename, $release, $version, $machine) = POSIX::uname();
+    Device::BCM2835::set_debug($machine ne 'armv6l');
     Device::BCM2835::init()
               || die "Could not init library";
 
@@ -162,7 +165,6 @@ sub initValves {
     Device::BCM2835::gpio_fsel ($store_pin,
                                 &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
 
-
     Device::BCM2835::gpio_write ($data_pin,  0);
     Device::BCM2835::gpio_write ($shift_pin, 0);
     Device::BCM2835::gpio_write ($store_pin, 0);
@@ -170,12 +172,17 @@ sub initValves {
 
 
 sub commitValves {
+    print "latch lo\n";
     Device::BCM2835::gpio_write ($store_pin, 0);
     for (my $ii = 8; $ii > 0; --$ii) {
+        print "shift lo\n";
         Device::BCM2835::gpio_write ($shift_pin, 0);
+        print "data ", $valveOn == $ii ? "hi" : "lo", "\n";
         Device::BCM2835::gpio_write ($data_pin, $valveOn == $ii ? 1 : 0);
+        print "shift hi\n";
         Device::BCM2835::gpio_write ($shift_pin, 1);
     }
+    print "latch hi\n";
     Device::BCM2835::gpio_write ($store_pin, 1);
     putCosmData (1, $valveOn);
 }
@@ -197,14 +204,14 @@ sub advanceValves {
 
     do {
         ++$valveOn;
-    } while ($valveOn <= (scalar @valve) && !$valve[$valveOn-1]{duration});
+    } while ($valveOn <= (scalar @$valve_specs) && !$valve_specs->[$valveOn-1]->{duration});
 
-    if ($valveOn > scalar @valve) {
+    if ($valveOn > scalar @$valve_specs) {
         $valveOn = 0;
         $trigger = 0;
     }
     else {
-        $trigger = time() + $valve[$valveOn-1]{duration} * $SECS_PER_MIN;
+        $trigger = time() + $valve_specs->[$valveOn-1]->{duration} * $SECS_PER_MIN;
     }
     $semaphore->up;
 
@@ -241,9 +248,9 @@ sub send_index {
                      "time = ", time, "<br>",
                      "pop = $pop<br>",
                      "Valves <form method='POST'>");
-    for (my $ii = 0; $ii < scalar @valve; ++$ii) {
-        $body .= "<input type='text' name='n$ii' value='$valve[$ii]{name}' />";
-        $body .= "<input type='text' name='d$ii' value='$valve[$ii]{duration}' />";
+    for (my $ii = 0; $ii < scalar @$valve_specs; ++$ii) {
+        $body .= "<input type='text' name='n$ii' value='" . encode_entities($valve_specs->[$ii]->{name}) . "' />";
+        $body .= "<input type='text' name='d$ii' value='$valve_specs->[$ii]->{duration}' />";
         $body .= "\&lt;-- ON" if ($ii + 1 == $valveOn);
         $body .= "<br>";
     }
@@ -273,10 +280,13 @@ sub process_one_req {
         elsif ($r->method eq "POST") {
             my $content = $r->content;
             while ($content =~ s/n(\d+)=(.*?)&//) {
-                $valve[$1]{name} = $2;
+                my ($index, $name) = ($1, $2);
+                $name =~ s/\+/ /g;
+                $name =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+                $valve_specs->[$index]->{name} = $name;
             }
             while ($content =~ s/d(\d+)=(\d+)&//) {
-                $valve[$1]{duration} = $2;
+                $valve_specs->[$1]->{duration} = int ($2);
             }
             send_index ($client);
         }
