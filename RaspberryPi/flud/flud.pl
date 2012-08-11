@@ -13,6 +13,7 @@ use threads::shared;
 use Thread::Semaphore;
 use Device::BCM2835;
 use POSIX qw(uname);
+use Storable;
 
 my $SECS_PER_MIN  = 60;
 my $SECS_PER_HOUR = 60 * 60;
@@ -20,14 +21,37 @@ my $SECS_PER_HOUR = 60 * 60;
 my $WEATHER_UPDATE_INTERVAL  = (15 * 60 * 1000); # millis
 my $CALENDAR_UPDATE_INTERVAL = ( 1 * 60 * 1000); # millis
 my $STATUS_UPDATE_INTERVAL   =              500; # millis
-my $TIME_SYNC_INTERVAL       = ( 5 * 60 * 1000); # millis
 
-use vars qw/$GOOGLE_FEED
-            $GOOGLE_PRIVATE
-            $WUNDERGROUND_APIKEY
-            $COSM_FEED
-            $COSM_APIKEY/;
-require 'credentials.pl' || die;
+my $conf_file = 'flud.conf';
+my $config    = do $conf_file;
+unless (defined $config) {
+    $config = {google_feed         => undef,
+               google_private      => undef,
+               wunderground_apikey => undef,
+               cosm_feed           => undef,
+               cosm_apikey         => undef,
+               zipcode             => undef,
+               valve_specs => [{name=>'valve 1', duration=>1},
+                               {
+                                name=>'valve 2', duration=>1},
+                               {
+                                name=>'valve 3', duration=>1},
+                               {
+                                name=>'valve 4', duration=>1},
+                               {
+                                name=>'valve 5', duration=>1},
+                               {
+                                name=>'valve 6', duration=>1},
+                               {
+                                name=>'valve 7', duration=>1},
+                               {
+                                name=>'valve 8', duration=>1}]};
+    open CONF, ">$conf_file";
+    print CONF Data::Dumper->Dump([$config], ['$config']);
+    close CONF;
+}
+$config = shared_clone ($config);
+
 
 my $last_weather_check  = 0;
 my $last_status_print   = 0;
@@ -38,15 +62,6 @@ my $semaphore = new Thread::Semaphore;
 my $pop     :shared     = 0;
 my $trigger :shared     = 0;
 my $valveOn :shared     = 0;  # 1-based; 0 means "all off"
-my $valve_specs :shared = &share([]);
-{
-    for (my $ii = 1; $ii <= 8; ++$ii) {
-        my $valve_spec = &share({});
-        $valve_spec->{name}     = "$ii";
-        $valve_spec->{duration} = 20;
-        push @$valve_specs, $valve_spec;
-    }
-}
 
 # Connect the shift register pins to these GPIO pins.
 my $shift_pin = &Device::BCM2835::RPI_GPIO_P1_11; # -> SH_CP 11 (shift clock)
@@ -95,14 +110,15 @@ sub printStatus {
 
 
 sub putCosmData {
+    return unless defined $config->{cosm_feed} && defined $config->{cosm_apikey};
     my ($stream, $value) = @_;
 
-    my $url = "http://api.cosm.com/v2/feeds/${COSM_FEED}";
+    my $url = 'http://api.cosm.com/v2/feeds/' . $config->{cosm_feed};
     my $json = qq( { "version" : "1.0.0", "datastreams" : [ {"id" : "$stream", "current_value" : "$value"} ] } );
     my $response = HTTP::Tiny->new->request ('PUT', $url,
                                              {'headers' => {
                                                             "Host"         => "api.cosm.com",
-                                                            'X-ApiKey'     => ${COSM_APIKEY},
+                                                            'X-ApiKey'     => $config->{cosm_apikey},
                                                             'Content-Type' => 'application/json; charset=UTF-8',
                                                             'Accept'       => 'application/json'},
                                               'content' => $json});
@@ -116,9 +132,12 @@ sub putCosmData {
 
 
 sub checkWeather {
+    return unless defined $config->{wunderground_apikey} && defined $config->{zipcode};
     say ("weather");
-    my $url = "http://api.wunderground.com/api/${WUNDERGROUND_APIKEY}/forecast/q/94705.json";
-    $_ = HTTP::Tiny->new->get(${url})->{content};
+    my $url = 'http://api.wunderground.com/api/' . $config->{wunderground_apikey} .
+              '/forecast/q/' .
+              $config->{zipcode}.'.json';
+    $_ = HTTP::Tiny->new->get($url)->{content};
     if (/\"pop\":(\d+)/) {
         $pop = $1;
         putCosmData (0, $pop);
@@ -131,15 +150,18 @@ sub checkWeather {
 
 
 sub checkCalendar {
+    return unless $config->{google_feed} && defined $config->{google_private};
     say ("calendar");
     $semaphore->down;
     $trigger = 0;
-    my $url = "http://www.google.com/calendar/feeds/${GOOGLE_FEED}\@group.calendar.google.com/private-${GOOGLE_PRIVATE}/full" .
+    my $url = 'http://www.google.com/calendar/feeds/' .
+              ${config}->{google_feed} . '@group.calendar.google.com/' .
+              'private-' . ${config}->{google_private} . '/full' .
               "?fields=entry(gd:when,title[text()='flud'])" .
               "&singleevents=true&prettyprint=true&max-results=1&orderby=starttime&sortorder=a&" .
               "&start-min=" . timestamp(time) .
               "&start-max=" . timestamp(time + $SECS_PER_HOUR);
-    $_ = HTTP::Tiny->new->get($url);
+    $_ = HTTP::Tiny->new->get($url)->{content};
     if (/startTime='(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{3}([\+\-])(\d{2}):(\d{2})'/) {
         my ($year, $mon, $mday, $hour, $min, $sec, $zone_sign, $zone_hour, $zone_min) =
                 ($1, $2, $3, $4, $5, $6, $7, $8, $9);
@@ -172,17 +194,12 @@ sub initValves {
 
 
 sub commitValves {
-    print "latch lo\n";
     Device::BCM2835::gpio_write ($store_pin, 0);
     for (my $ii = 8; $ii > 0; --$ii) {
-        print "shift lo\n";
         Device::BCM2835::gpio_write ($shift_pin, 0);
-        print "data ", $valveOn == $ii ? "hi" : "lo", "\n";
         Device::BCM2835::gpio_write ($data_pin, $valveOn == $ii ? 1 : 0);
-        print "shift hi\n";
         Device::BCM2835::gpio_write ($shift_pin, 1);
     }
-    print "latch hi\n";
     Device::BCM2835::gpio_write ($store_pin, 1);
     putCosmData (1, $valveOn);
 }
@@ -204,14 +221,14 @@ sub advanceValves {
 
     do {
         ++$valveOn;
-    } while ($valveOn <= (scalar @$valve_specs) && !$valve_specs->[$valveOn-1]->{duration});
+    } while ($valveOn <= (scalar @{$config->{valve_specs}}) && !$config->{valve_specs}->[$valveOn-1]->{duration});
 
-    if ($valveOn > scalar @$valve_specs) {
+    if ($valveOn > scalar @{$config->{valve_specs}}) {
         $valveOn = 0;
         $trigger = 0;
     }
     else {
-        $trigger = time() + $valve_specs->[$valveOn-1]->{duration} * $SECS_PER_MIN;
+        $trigger = time() + $config->{valve_specs}->[$valveOn-1]->{duration} * $SECS_PER_MIN;
     }
     $semaphore->up;
 
@@ -245,15 +262,22 @@ sub send_index {
     $response->header ("Content-Type" => "text/html");
 
     my $body = join ('',
-                     "time = ", time, "<br>",
-                     "pop = $pop<br>",
+                     "Server timestamp = ", time, "<br>",
+                     "Next trigger = ", $trigger, "<br>",
+                     "Chance of precipitation is $pop%<br>",
+                     "<br>",
                      "Valves <form method='POST'>");
-    for (my $ii = 0; $ii < scalar @$valve_specs; ++$ii) {
-        $body .= "<input type='text' name='n$ii' value='" . encode_entities($valve_specs->[$ii]->{name}) . "' />";
-        $body .= "<input type='text' name='d$ii' value='$valve_specs->[$ii]->{duration}' />";
+    for (my $ii = 0; $ii < scalar @{$config->{valve_specs}}; ++$ii) {
+        $body .= "<input type='text' name='n$ii' value='" . encode_entities($config->{valve_specs}->[$ii]->{name}) . "' />";
+        $body .= "<input type='text' name='d$ii' value='$config->{valve_specs}->[$ii]->{duration}' />";
         $body .= "\&lt;-- ON" if ($ii + 1 == $valveOn);
         $body .= "<br>";
     }
+    $body .= "<br>";
+    $body .= "Google calendar XML <input type='text' name='gcal' value='" . encode_entities("http://www.google.com/calendar/feeds/$config->{google_feed}\@group.calendar.google.com/private-$config->{google_private}/full") . "' /><br>";
+    $body .= "Zipcode <input type='text' name='zipcode' value='$config->{zipcode}' /><br>";
+    $body .= "Cosm API key<input type='text' name='cosm_apikey' value='$config->{cosm_apikey}' /><br>";
+    $body .= "Cosm feed id<input type='text' name='cosm_feed' value='$config->{cosm_feed}' /><br>";
     $body .= "<input type='hidden' name='h' />";
     $body .= "<input type='submit' value='Submit' /></form>";
     $body .= "<form action='advance'><input type='submit' value='Advance' /></form>";
@@ -283,11 +307,41 @@ sub process_one_req {
                 my ($index, $name) = ($1, $2);
                 $name =~ s/\+/ /g;
                 $name =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-                $valve_specs->[$index]->{name} = $name;
+                $config->{valve_specs}->[$index]->{name} = $name;
             }
             while ($content =~ s/d(\d+)=(\d+)&//) {
-                $valve_specs->[$1]->{duration} = int ($2);
+                $config->{valve_specs}->[$1]->{duration} = int ($2);
             }
+            while ($content =~ s|gcal=http://www.google.com/calendar/feeds/(.*)\@group.calendar.google.com/private-(.*?)/.*?&||) {
+                my ($feed, $private) = ($1, $2);
+                $feed =~ s/\+/ /g;
+                $feed =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+                $config->{google_feed} = $feed;
+                $private =~ s/\+/ /g;
+                $private =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+                $config->{google_private} = $private;
+            }
+            while ($content =~ s/zipcode=(\d+)&//) {
+                my $value = $1;
+                $value =~ s/\+/ /g;
+                $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+                $config->{zipcode} = $value;
+            }
+            while ($content =~ s/cosm_apikey=(.*?)&//) {
+                my $value = $1;
+                $value =~ s/\+/ /g;
+                $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+                $config->{cosm_apikey} = $value;
+            }
+            while ($content =~ s/cosm_feed=(.*?)&//) {
+                my $value = $1;
+                $value =~ s/\+/ /g;
+                $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+                $config->{cosm_feed} = $value;
+            }
+            open CONF, ">$conf_file";
+            print CONF Data::Dumper->Dump([$config], ['$config']);
+            close CONF;
             send_index ($client);
         }
         else {
@@ -305,7 +359,6 @@ commitValves();
 
 threads->create(\&run_webserver);
 
-# FIXME: don't spin
 do {
     if (0) {}
     elsif (!$valveOn && (!$last_weather_check  || (millis() - $last_weather_check > $WEATHER_UPDATE_INTERVAL))) {
@@ -320,6 +373,7 @@ do {
     elsif (!$last_status_print || (millis() - $last_status_print > $STATUS_UPDATE_INTERVAL)) {
         printStatus();
     }
+    sleep (1);
 } while (1);
 
 
