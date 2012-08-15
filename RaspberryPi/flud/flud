@@ -3,72 +3,60 @@
 use strict;
 use warnings;
 
-use constant DAEMON   => 'flud';
-use constant LOG_DIR  => '/var/log/' . DAEMON;
-use constant LOG_FILE => DAEMON . '.log';
-
-use Proc::PID::File;
+use Getopt::Long;
 use Proc::Daemon;
-use Log::Dispatch;
-use Log::Dispatch::File;
-use Date::Format;
-use File::Spec;
+use Proc::PID::File;
+use Log::Log4perl qw(get_logger);
 
-sub dienice ($);
-my $interval = 60;	# waiting time (in seconds)
-startDaemon();		# fork and background process
+my $foreground = 0;
+GetOptions ("foreground"  => \$foreground);
 
-# Setup a logging agent
-my $log = new Log::Dispatch(
-        callbacks => sub {
-                my %h = @_;
-                return Date::Format::time2str( '%B %e %T', time ) . ' ' . DAEMON . " \[$$]: " . $h{message} . "\n";
-        }
+my $interval = 5;           # waiting time (in seconds)
+
+my $conf = q(
+    log4perl.appender.Logfile          = Log::Log4perl::Appender::File
+    log4perl.appender.Logfile.filename = /var/log/flud.log
+    log4perl.appender.Logfile.mode     = write
+    log4perl.appender.Logfile.layout   = Log::Log4perl::Layout::PatternLayout
+    log4perl.appender.Logfile.layout.ConversionPattern = %d %-5p - %m{chomp}%n
+
+    log4perl.appender.Screen           = Log::Log4perl::Appender::Screen
+    log4perl.appender.Screen.stderr    = 0
+    log4perl.appender.Screen.layout    = Log::Log4perl::Layout::SimpleLayout
 );
-$log->add(
-        Log::Dispatch::File->new(
-                name      => 'file1',
-                min_level => 'warning',
-#                mode      => 'append',
-                filename  => File::Spec->catfile( LOG_DIR, LOG_FILE ),
-        )
-);
-$log->warning( "Starting Processing:  " . time() );
+
+if ($foreground) {
+    $conf .= 'log4perl.rootlogger = DEBUG, Screen';
+}
+else {
+    die "Must run as root to daemonize, or with --foreground" unless $< == 0;
+    # Fork and detach from the parent process
+    eval { Proc::Daemon::Init(); };
+    die "Unable to start daemon: $@" if ($@);
+    # Get a PID file
+    die ("Already running as daemon, exiting this instance")
+        if Proc::PID::File->running();
+    $conf .= 'log4perl.rootlogger = DEBUG, Logfile';
+}
+
+# Start log
+Log::Log4perl::init( \$conf );
+my $log = Log::Log4perl->get_logger('main');
+$log->info ("starting");
 
 # Setup signal handlers so that we have time to cleanup before shutting down
 my $keep_going = 1;
-$SIG{HUP}  = sub { $log->warning("Caught SIGHUP:  exiting gracefully"); $keep_going = 0; };
-$SIG{INT}  = sub { $log->warning("Caught SIGINT:  exiting gracefully"); $keep_going = 0; };
-$SIG{QUIT} = sub { $log->warning("Caught SIGQUIT:  exiting gracefully"); $keep_going = 0; };
-$SIG{TERM} = sub { $log->warning("Caught SIGTERM:  exiting gracefully"); $keep_going = 0; };
+$SIG{HUP}  = sub { $log->info ("caught SIGHUP: exiting gracefully");  $keep_going = 0; };
+$SIG{INT}  = sub { $log->info ("caught sigint: exiting gracefully");  $keep_going = 0; };
+$SIG{QUIT} = sub { $log->info ("caught sigquit: exiting gracefully"); $keep_going = 0; };
+$SIG{TERM} = sub { $log->info ("caught SIGTERM: exiting gracefully"); $keep_going = 0; };
 
 # enter main loop
 while ($keep_going) {
     # here the action you want to perform every $interval seconds
-    sleep( $interval );
+    $log->debug ("going");
+    sleep ($interval);
 }
 
 # Mark a clean exit in the log
-$log->warning( "Stopping Processing:  " . time() );
-
-# startDaemon
-# Fork and detach from the parent process
-sub startDaemon {
-        # Fork and detach from the parent process
-        eval { Proc::Daemon::Init; };
-        if ($@) {
-            $log->warning( "Unable to start daemon:  $@  " . time() );
-            dienice("Unable to start daemon:  $@");
-        }
-
-        # Get a PID file
-        dienice("Already running!") if Proc::PID::File->running();
-}
-
-# dienice
-# write die messages to the log before die'ing
-sub dienice ($) {
-    my ( $package, $filename, $line ) = caller;
-    $log->critical("$_[0] at line $line in $filename");
-    die $_[0];
-}
+$log->info ("stopping");
