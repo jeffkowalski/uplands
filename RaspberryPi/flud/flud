@@ -58,8 +58,6 @@ $log->info ('starting');
 
 # Setup signal handlers so that we have time to cleanup before shutting down
 my $keep_going = 1;
-# TODO: implement HUP handler
-$SIG{HUP}  = sub { $log->info ('caught SIGHUP: exiting gracefully');  $keep_going = 0; };
 $SIG{INT}  = sub { $log->info ('caught SIGINT: exiting gracefully');  $keep_going = 0; };
 $SIG{QUIT} = sub { $log->info ('caught SIGQUIT: exiting gracefully'); $keep_going = 0; };
 $SIG{TERM} = sub { $log->info ('caught SIGTERM: exiting gracefully'); $keep_going = 0; };
