@@ -79,7 +79,7 @@ my $data_pin  = &Device::BCM2835::RPI_GPIO_P1_15; # -> DS    14 (data in)
 # connect rPi 6 GND to ~OE 13 (output enable, active low) to ground
 
 
-my $conf_file = 'flud.conf';
+my $conf_file = '/etc/flud.conf';
 my $config    = do $conf_file;
 unless (defined $config) {
     $config = {google_feed         => undef,
