@@ -10,8 +10,13 @@ sudo cpanm HTTP::Daemon
 curl -OL http://www.open.com.au/mikem/bcm2835/bcm2835-1.6.tar.gz
 tar zxvf bcm2835-1.6.tar.gz
 cd bcm2835-1.6
-# FIXME: add uname check to enable -fPIC on non-RPi devices
-./configure # CFLAGS=-fPIC
+machine=`uname -m`
+if [ "$machine" = "armv6l" ] ; then
+    ./configure
+else
+    ./configure CFLAGS=-fPIC
+fi
+make clean
 make
 sudo make check
 sudo make install

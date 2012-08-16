@@ -23,14 +23,16 @@ use Storable;
 
 
 my $foreground = 0;
-GetOptions ("foreground"  => \$foreground);
-
-my $interval = 5;           # waiting time (in seconds)
+GetOptions ('foreground' => \$foreground);
 
 my $conf = q(
+    log4perl.logger.foreground         = DEBUG, Screen
+    log4perl.logger.daemon             = INFO, Logfile
+
     log4perl.appender.Logfile          = Log::Log4perl::Appender::File
     log4perl.appender.Logfile.filename = /var/log/flud.log
-    log4perl.appender.Logfile.mode     = write
+    log4perl.appender.Logfile.mode     = clobber
+    log4perl.appender.Logfile.create_at_logtime = true
     log4perl.appender.Logfile.layout   = Log::Log4perl::Layout::PatternLayout
     log4perl.appender.Logfile.layout.ConversionPattern = %d %-5p - %m{chomp}%n
 
@@ -39,10 +41,7 @@ my $conf = q(
     log4perl.appender.Screen.layout    = Log::Log4perl::Layout::SimpleLayout
 );
 
-if ($foreground) {
-    $conf .= 'log4perl.rootlogger = DEBUG, Screen';
-}
-else {
+unless ($foreground) {
     die 'Must run as root to daemonize, or with --foreground' unless $< == 0;
     # Fork and detach from the parent process
     eval { Proc::Daemon::Init(); };
@@ -50,19 +49,19 @@ else {
     # Get a PID file
     die ('Already running as daemon, exiting this instance')
         if Proc::PID::File->running();
-    $conf .= 'log4perl.rootlogger = DEBUG, Logfile';
 }
 
 # Start log
-Log::Log4perl::init( \$conf );
-my $log = Log::Log4perl->get_logger('main');
+Log::Log4perl::init (\$conf);
+my $log = Log::Log4perl->get_logger ($foreground ? 'foreground' : 'daemon');
 $log->info ('starting');
 
 # Setup signal handlers so that we have time to cleanup before shutting down
 my $keep_going = 1;
+# TODO: implement HUP handler
 $SIG{HUP}  = sub { $log->info ('caught SIGHUP: exiting gracefully');  $keep_going = 0; };
-$SIG{INT}  = sub { $log->info ('caught sigint: exiting gracefully');  $keep_going = 0; };
-$SIG{QUIT} = sub { $log->info ('caught sigquit: exiting gracefully'); $keep_going = 0; };
+$SIG{INT}  = sub { $log->info ('caught SIGINT: exiting gracefully');  $keep_going = 0; };
+$SIG{QUIT} = sub { $log->info ('caught SIGQUIT: exiting gracefully'); $keep_going = 0; };
 $SIG{TERM} = sub { $log->info ('caught SIGTERM: exiting gracefully'); $keep_going = 0; };
 
 
@@ -73,6 +72,15 @@ my $WEATHER_UPDATE_INTERVAL  = (15 * 60 * 1000); # millis
 my $CALENDAR_UPDATE_INTERVAL = ( 1 * 60 * 1000); # millis
 my $STATUS_UPDATE_INTERVAL   =              500; # millis
 
+# Connect the shift register pins to these GPIO pins.
+my $shift_pin = &Device::BCM2835::RPI_GPIO_P1_11; # -> SH_CP 11 (shift clock)
+my $store_pin = &Device::BCM2835::RPI_GPIO_P1_13; # -> ST_CP 12 (storage clock)
+my $data_pin  = &Device::BCM2835::RPI_GPIO_P1_15; # -> DS    14 (data in)
+# connect rPi 2 5v  to VCC 16
+# connect rPi 6 GND to GND  8
+# connect rPi 6 GND to ~OE 13 (output enable, active low) to ground
+
+
 my $conf_file = 'flud.conf';
 my $config    = do $conf_file;
 unless (defined $config) {
@@ -82,21 +90,7 @@ unless (defined $config) {
                cosm_feed           => undef,
                cosm_apikey         => undef,
                zipcode             => undef,
-               valve_specs => [{name=>'valve 1', duration=>1},
-                               {
-                                name=>'valve 2', duration=>1},
-                               {
-                                name=>'valve 3', duration=>1},
-                               {
-                                name=>'valve 4', duration=>1},
-                               {
-                                name=>'valve 5', duration=>1},
-                               {
-                                name=>'valve 6', duration=>1},
-                               {
-                                name=>'valve 7', duration=>1},
-                               {
-                                name=>'valve 8', duration=>1}]};
+               valve_specs => [map { {name=>"valve $_", duration=>1} } 1..8]};
     open CONF, ">$conf_file";
     print CONF Data::Dumper->Dump([$config], ['$config']);
     close CONF;
@@ -113,15 +107,6 @@ my $semaphore = new Thread::Semaphore;
 my $pop     :shared     = 0;
 my $trigger :shared     = 0;
 my $valveOn :shared     = 0;  # 1-based; 0 means "all off"
-
-# Connect the shift register pins to these GPIO pins.
-my $shift_pin = &Device::BCM2835::RPI_GPIO_P1_11; # -> SH_CP 11 (shift clock)
-my $store_pin = &Device::BCM2835::RPI_GPIO_P1_13; # -> ST_CP 12 (storage clock)
-my $data_pin  = &Device::BCM2835::RPI_GPIO_P1_15; # -> DS    14 (data in)
-# connect rPi 2 5v  to VCC 16
-# connect rPi 6 GND to GND  8
-# connect rPi 6 GND to ~OE 13 (output enable, active low) to ground
-
 
 sub millis { return time * 1000; }
 
@@ -147,7 +132,7 @@ sub printStatus {
                             ($trigger - $current) % $SECS_PER_MIN));
   }
   else {
-      $log->debug (sprintf ('%d%%', $pop));
+      $log->trace (sprintf ('%d%%', $pop));
   }
   $last_status_print = millis();
 }
@@ -157,6 +142,7 @@ sub putCosmData {
     return unless defined $config->{cosm_feed} && defined $config->{cosm_apikey};
     my ($stream, $value) = @_;
 
+    $log->debug ('putting cosm data');
     my $url = 'http://api.cosm.com/v2/feeds/' . $config->{cosm_feed};
     my $json = qq( { "version" : "1.0.0", "datastreams" : [ {"id" : "$stream", "current_value" : "$value"} ] } );
     my $response = HTTP::Tiny->new->request ('PUT', $url,
@@ -167,23 +153,25 @@ sub putCosmData {
                                                             'Accept'       => 'application/json'},
                                               'content' => $json});
     if ($response->{success}) {
-        #print $response->{content};
+        $log->trace ("cosm replied '$response->{status}'");
     } else {
-        $log->warn ('Cosm replied ' . $response->{status});
-        #print STDERR Dumper($response);
+        $log->warn ("cosm replied '$response->{status}'");
+        $log->trace (Dumper($response));
     }
 }
 
 
 sub checkWeather {
     return unless defined $config->{wunderground_apikey} && defined $config->{zipcode};
-    $log->info ('retrieving weather');
+    $log->info ("retrieving weather for zipcode '$config->{zipcode}'");
     my $url = 'http://api.wunderground.com/api/' . $config->{wunderground_apikey} .
               '/forecast/q/' .
               $config->{zipcode} . '.json';
-    $_ = HTTP::Tiny->new->get($url)->{content};
-    if (/\"pop\":(\d+)/) {
+    my $weather = HTTP::Tiny->new->get($url)->{content};
+    $log->trace ($weather);
+    if ($weather =~ /\"pop\":(\d+)/) {
         $pop = $1;
+        $log->info ("chance of rain = $pop%");
         putCosmData (0, $pop);
     }
     else {
@@ -205,8 +193,9 @@ sub checkCalendar {
               '&singleevents=true&prettyprint=true&max-results=1&orderby=starttime&sortorder=a&' .
               '&start-min=' . timestamp(time) .
               '&start-max=' . timestamp(time + $SECS_PER_HOUR);
-    $_ = HTTP::Tiny->new->get($url)->{content};
-    if (/startTime='(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{3}([\+\-])(\d{2}):(\d{2})'/) {
+    my $event = HTTP::Tiny->new->get($url)->{content};
+    $log->trace ($event);
+    if ($event =~ /startTime='(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{3}([\+\-])(\d{2}):(\d{2})'/) {
         my ($year, $mon, $mday, $hour, $min, $sec, $zone_sign, $zone_hour, $zone_min) =
                 ($1, $2, $3, $4, $5, $6, $7, $8, $9);
         $trigger = timegm ($sec, $min, $hour, $mday, $mon-1, $year-1900) -
@@ -321,7 +310,8 @@ sub send_index {
         $body .= "<br>";
     }
     $body .= "<br>";
-    $body .= "Google calendar XML <input type='text' name='gcal' value='" . encode_entities("http://www.google.com/calendar/feeds/$config->{google_feed}\@group.calendar.google.com/private-$config->{google_private}/full") . "' /><br>";
+    $body .= "Google calendar XML <input type='text' name='gcal' value='" .
+            encode_entities("http://www.google.com/calendar/feeds/$config->{google_feed}\@group.calendar.google.com/private-$config->{google_private}/full") . "' /><br>";
     $body .= "Zipcode <input type='text' name='zipcode' value='$config->{zipcode}' /><br>";
     $body .= "Cosm API key<input type='text' name='cosm_apikey' value='$config->{cosm_apikey}' /><br>";
     $body .= "Cosm feed id<input type='text' name='cosm_feed' value='$config->{cosm_feed}' /><br>";
@@ -368,23 +358,13 @@ sub process_one_req {
                 $private =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
                 $config->{google_private} = $private;
             }
-            while ($content =~ s/zipcode=(\d+)&//) {
-                my $value = $1;
-                $value =~ s/\+/ /g;
-                $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-                $config->{zipcode} = $value;
-            }
-            while ($content =~ s/cosm_apikey=(.*?)&//) {
-                my $value = $1;
-                $value =~ s/\+/ /g;
-                $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-                $config->{cosm_apikey} = $value;
-            }
-            while ($content =~ s/cosm_feed=(.*?)&//) {
-                my $value = $1;
-                $value =~ s/\+/ /g;
-                $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-                $config->{cosm_feed} = $value;
+            foreach my $name (qw(zipcode cosm_apikey cosm_feed)) {
+                while ($content =~ s/${name}=(\d+)&//) {
+                    my $value = $1;
+                    $value =~ s/\+/ /g;
+                    $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+                    $config->{$name} = $value;
+                }
             }
             open CONF, ">$conf_file";
             print CONF Data::Dumper->Dump([$config], ['$config']);
@@ -392,18 +372,18 @@ sub process_one_req {
             send_index ($client);
         }
         else {
-            $client->send_error(RC_FORBIDDEN);
+            $client->send_error (RC_FORBIDDEN);
         }
     }
     $client->close;
-    undef($client);
+    undef ($client);
 }
 
 
 initValves();
-commitValves();
+stopValves();
 
-threads->create(\&run_webserver);
+threads->create (\&run_webserver);
 
 while ($keep_going) {
     if (0) {}
@@ -419,10 +399,12 @@ while ($keep_going) {
     elsif (!$last_status_print || (millis() - $last_status_print > $STATUS_UPDATE_INTERVAL)) {
         printStatus();
     }
-    sleep ($interval);
+    sleep (1);
 }
 
+stopValves();
+
 # Mark a clean exit in the log
-$log->info ('stopping');
+$log->info ('exiting');
 
 __END__
