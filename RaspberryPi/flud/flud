@@ -155,7 +155,7 @@ sub putCosmData {
     if ($response->{success}) {
         $log->trace ("cosm replied '$response->{status}'");
     } else {
-        $log->warn ("cosm replied '$response->{status}'");
+        $log->error ("cosm replied '$response->{status}'");
         $log->trace (Dumper($response));
     }
 }
@@ -175,7 +175,7 @@ sub checkWeather {
         putCosmData (0, $pop);
     }
     else {
-        $log->warn ('error getting weather');
+        $log->error ('error getting weather');
     }
     $last_weather_check = millis();
 }
