@@ -23,7 +23,9 @@ use Storable;
 
 
 my $foreground = 0;
-GetOptions ('foreground' => \$foreground);
+my $debug      = 0;
+GetOptions ('foreground' => \$foreground,
+            'debug'      => \$debug);
 
 my $conf = q(
     log4perl.logger.foreground         = DEBUG, Screen
@@ -207,7 +209,7 @@ sub checkCalendar {
 sub initValves {
     # call set_debug(1) to do a non-destructive test on non-RPi hardware
     my ($sysname, $nodename, $release, $version, $machine) = POSIX::uname();
-    Device::BCM2835::set_debug($machine ne 'armv6l');
+    Device::BCM2835::set_debug($machine ne 'armv6l' || $debug);
     Device::BCM2835::init() or $log->logdie ('could not init library');
 
     Device::BCM2835::gpio_fsel ($data_pin,

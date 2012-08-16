@@ -1,12 +1,11 @@
 #!/bin/sh
 
 # install CPAN minus
-sudo apt-get install curl gcc-4.7
-sudo curl -L http://cpanmin.us | perl - --sudo App::cpanminus
+apt-get install curl gcc-4.7
+curl -L http://cpanmin.us | perl - --sudo App::cpanminus
 
-sudo cpanm HTTP::Daemon
-
-# install access to GPIO and other IO functions on the Broadcom BCM 2835 chip
+# install Broadcom BCM 2835 chip library
+pushd /tmp
 curl -OL http://www.open.com.au/mikem/bcm2835/bcm2835-1.6.tar.gz
 tar zxvf bcm2835-1.6.tar.gz
 cd bcm2835-1.6
@@ -18,6 +17,12 @@ else
 fi
 make clean
 make
-sudo make check
-sudo make install
-sudo cpanm Device::BCM2835
+make check
+make install
+popd
+
+# install perl module dependencies
+cpanm HTTP::Daemon
+cpanm Proc::PID::File
+cpanm Log::Log4perl
+cpanm Device::BCM2835

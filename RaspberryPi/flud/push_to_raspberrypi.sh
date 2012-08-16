@@ -2,6 +2,9 @@
 
 cd ..
 tar cvf - \
-    flud/flud.pl \
-    flud/get_perl_dependencies.sh \
+    flud/init.d-flud \
+    flud/logrotate.d-flud \
+    flud/flud \
+    flud/flud.conf.save \
+    flud/Makefile \
     | ssh pi@raspberrypi tar xvf -
