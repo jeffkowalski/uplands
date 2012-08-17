@@ -105,6 +105,13 @@
 #              If unspecified, an attempt is made to determine the name of a
 #              connected Arduino's serial device.
 #
+# SKETCHBOOKPATH
+#              The path where your sketch directories are stored.
+#              This is typically the directory above your .ino (or .pde)
+#              file.  It will be set automatically unless set externally.
+#              $(SKETCHBOOKPATH)/libraries can contain private libraries
+#              to build and include.
+#
 # SOURCES      A list of all source files of whatever language.  The language
 #              type is determined by the file extension.  This is set
 #              automatically if a .ino (or .pde) is found.
@@ -170,10 +177,16 @@ SOURCES := $(INOFILE) \
 	$(wildcard $(addprefix util/, *.c *.cc *.cpp)) \
 	$(wildcard $(addprefix utility/, *.c *.cc *.cpp))
 
-# automatically determine included libraries
-LIBRARIES := $(filter $(notdir $(wildcard $(ARDUINODIR)/libraries/*)), \
-	$(shell sed -ne "s/^ *\# *include *[<\"]\(.*\)\.h[>\"]/\1/p" $(SOURCES)))
+# default sketchbook path
+ifndef SKETCHBOOKPATH
+SKETCHBOOKPATH := $(abspath ..)
+endif
 
+# automatically determine included libraries
+LIBRARIES += $(filter $(notdir $(wildcard $(SKETCHBOOKPATH)/libraries/*)), \
+	$(shell sed -ne "s/^ *\# *include *[<\"]\(.*\)\.h[>\"]/\1/p" $(SOURCES)))
+LIBRARIES += $(filter $(notdir $(wildcard $(ARDUINODIR)/libraries/*)), \
+	$(shell sed -ne "s/^ *\# *include *[<\"]\(.*\)\.h[>\"]/\1/p" $(SOURCES)))
 endif
 
 # no serial device? make a poor attempt to detect an arduino
@@ -202,7 +215,7 @@ ARDUINOCOREDIR := $(ARDUINODIR)/hardware/arduino/cores/arduino
 ARDUINOLIB := .lib/arduino.a
 ARDUINOLIBLIBSDIR := $(ARDUINODIR)/libraries
 ARDUINOLIBLIBSPATH := $(foreach lib, $(LIBRARIES), \
-	$(ARDUINODIR)/libraries/$(lib)/ $(ARDUINODIR)/libraries/$(lib)/utility/ )
+	$(SKETCHBOOKPATH)/libraries/$(lib)/ $(ARDUINODIR)/libraries/$(lib)/ $(ARDUINODIR)/libraries/$(lib)/utility/)
 ARDUINOLIBOBJS := $(foreach dir, $(ARDUINOCOREDIR) $(ARDUINOLIBLIBSPATH), \
 	$(patsubst %, .lib/%.o, $(wildcard $(addprefix $(dir)/, *.c *.cpp))))
 ifeq "$(AVRDUDECONF)" ""
@@ -251,6 +264,7 @@ CPPFLAGS += -mmcu=$(BOARD_BUILD_MCU)
 CPPFLAGS += -DF_CPU=$(BOARD_BUILD_FCPU) -DARDUINO=$(ARDUINOCONST)
 CPPFLAGS += -I. -Iutil -Iutility -I$(ARDUINOCOREDIR)
 CPPFLAGS += -I$(ARDUINODIR)/hardware/arduino/variants/$(BOARD_BUILD_VARIANT)/
+CPPFLAGS += $(addprefix -I$(SKETCHBOOKPATH)/libraries/, $(LIBRARIES))
 CPPFLAGS += $(addprefix -I$(ARDUINODIR)/libraries/, $(LIBRARIES))
 CPPFLAGS += $(patsubst %, -I$(ARDUINODIR)/libraries/%/utility, $(LIBRARIES))
 CPPDEPFLAGS = -MMD -MP -MF .dep/$<.dep
