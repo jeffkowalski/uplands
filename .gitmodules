@@ -1,3 +1,6 @@
-[submodule "Arduino/libraries/jeelib"]
-	path = Arduino/libraries/jeelib
+[submodule "Arduino/libraries/JeeLib"]
+	path = Arduino/libraries/JeeLib
 	url = git://github.com/jcw/jeelib.git
+[submodule "Arduino/Arduino-Makefile"]
+	path = Arduino/Arduino-Makefile
+	url = git@github.com:jeffkowalski/Arduino-Makefile.git
