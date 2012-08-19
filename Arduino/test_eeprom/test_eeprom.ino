@@ -1,31 +1,6 @@
 #include <Wire.h>
 #include <EEPROM.h>
 
-void setup() {
-    char somedata[] = "Hello, Parker!"; // data to write
-    Wire.begin(); // initialise the connection
-    Serial.begin(9600);
-    ext_eeprom_write_page(0, (byte *)somedata, sizeof(somedata)); // write to EEPROM 
-
-    delay(10); //add a small delay
-
-    Serial.println("Memory written");
-}
-
-void loop() {
-    int addr=0; //first address
-    byte b = ext_eeprom_read_byte(0); // access the first address from the memory
-
-    while (b!=0) 
-    {
-      Serial.print((char)b); //print content to serial port
-      addr++; //increase address
-      b = ext_eeprom_read_byte(addr); //access an address from the memory
-    }
-    Serial.println(" ");
-    delay(2000);
-}
-
 // ================
 // EEPROM Functions
 // ================
@@ -81,4 +56,33 @@ void ext_eeprom_read_buffer(unsigned int eeaddress, byte *buffer, int length) {
   delay(1);
 }
 
+// ================
+// EEPROM Functions
+// ================
+
+
+
+void setup() {
+    char somedata[] = "Hello, Parker!"; // data to write
+    Wire.begin(); // initialise the connection
+    Serial.begin(9600);
+    ext_eeprom_write_page(0, (byte *)somedata, sizeof(somedata)); // write to EEPROM
+
+    delay(10); //add a small delay
+
+    Serial.println("Memory written");
+}
+
+void loop() {
+    int addr=0; //first address
+    byte b = ext_eeprom_read_byte(0); // access the first address from the memory
+
+    while (b!=0) {
+      Serial.print((char)b); //print content to serial port
+      addr++; //increase address
+      b = ext_eeprom_read_byte(addr); //access an address from the memory
+    }
+    Serial.println(" ");
+    delay(2000);
+}
 
