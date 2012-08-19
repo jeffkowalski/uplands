@@ -51,10 +51,17 @@ endif
 cpanm :: curl
 ifeq ($(shell which cpanm),)
 cpanm ::
-	apt-get install cpanm
+	apt-get install cpanminus
 endif
 
-/usr/local/lib/libbcm2835.ab : | curl
+gcc-4.7 ::
+ifeq ($(shell which gcc-4.7),)
+gcc-4.7 ::
+	apt-get install gcc-4.7
+endif
+
+
+/usr/local/lib/libbcm2835.a : | curl
 	echo install Broadcom BCM 2835 chip library
 	( cd /tmp ; \
 	curl -L http://www.open.com.au/mikem/bcm2835/bcm2835-1.6.tar.gz | \
@@ -71,13 +78,15 @@ endif
 
 Device-BCM2835:: /usr/local/lib/libbcm2835.a
 
-PERLMODULES = HTTP::Daemon Proc::PID::File Log::Log4perl Device::BCM2835
+HTTP-Daemon::    gcc-4.7
+
+PERLMODULES = HTTP::Daemon Proc::PID::File Log::Log4perl Device::BCM2835 Proc::Daemon
 
 define PERLMODULE_template
 ifneq ($(shell perl -e "eval q{use $(1); 1;} && print q(found)"),found)
 perl-modules:: cpanm
 perl-modules:: $(subst ::,-,$(1))
-$(subst ::,-,$(1)) :
+$(subst ::,-,$(1)) ::
 	cpanm $(1)
 endif
 endef
