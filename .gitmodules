@@ -4,3 +4,6 @@
 [submodule "Arduino/Arduino-Makefile"]
 	path = Arduino/Arduino-Makefile
 	url = git@github.com:jeffkowalski/Arduino-Makefile.git
+[submodule "Arduino/libraries/MemoryFree"]
+	path = Arduino/libraries/MemoryFree
+	url = git://github.com/sudar/MemoryFree.git
