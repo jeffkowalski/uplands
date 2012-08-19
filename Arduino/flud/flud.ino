@@ -255,17 +255,17 @@ static void printStatus() {
               "v%d %02ld:%02ld  %db", valveOn,
               (trigger - current) / SECS_PER_MIN,
               (trigger - current) % SECS_PER_MIN,
-              freeMemory());
+              getFreeMemory());
   else if (trigger > current)
     snprintf (line, sizeof(line),
               "%d%% %02ld:%02ld  %db", pop,
               (trigger - current) / SECS_PER_MIN,
               (trigger - current) % SECS_PER_MIN,
-              freeMemory());
+              getFreeMemory());
   else
     snprintf (line, sizeof(line),
               "%d%%  %db", pop,
-              freeMemory());
+              getFreeMemory());
   line[sizeof(line)-1] = '\0';
   say (timestamp(now())+5, line);
   last_status_print = millis();
