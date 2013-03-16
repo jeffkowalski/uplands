@@ -1,0 +1,45 @@
+* Download Zurk, unzip and copy to usb
+http://sourceforge.net/projects/zurk/files/
+
+* Copy files to usb before boot
+#+BEGIN_SRC sh
+cat > psp/network_config
+<configuration gateway="" ip="" nameserver1="" encryption="AES" key="uplands_airnet" hwaddr="00:23:69:56:48:E1" nameserver2="" auth="WPAPSK" netmask="" type="wlan" ssid="airnet" allocation="dhcp" encoding="ascii" />
+
+cat > psp/network_configs
+<configurations><configuration allocation="dhcp" key="uplands_airnet" encoding="ascii" encryption="AES" auth="WPAPSK" hwaddr="00:23:69:56:48:E1" ssid="airnet" type="wlan" /></configurations>
+
+touch psp/start_sshd
+#+END_SRC sh
+
+* Copy files
+#+BEGIN_SRC sh
+scp -r $workspace/uplands/Chumby/alarmring.swf $workspace/uplands/Chumby/google-wakeup root@chumby-classic:/mnt/usb
+scp $workspace/uplands/Chumby/psp-alarms root@chumby-classic:/psp/alarms
+scp $workspace/uplands/Chumby/psp-url_streams root@chumby-classic:/psp/url_streams
+scp $workspace/uplands/Chumby/psp-nightmode.sh root@chumby-classic:/psp/nightmode.sh
+#+END_SRC sh
+
+* Boot USB
+* adjust crontab
+1 0,1 * * * /mnt/usb/google-wakeup/google-wakeup.pl
+0 22 * * * /psp/nightmode.sh
+* adjust psp/clock_format
+12
+* adjust weather settings in psp/zwapi.sh
+http://rss.wunderground.com/auto/rss_full/stations/94705.1.99999.xml?units=both
+http://mobile.wunderground.com/cgi-bin/findweather/getForecast?brand=mobile_english&query=berkeley%20ca
+wget -q --output-document=/tmp/zwapi.html "http://m.wund.com/cgi-bin/findweather/getForecast?brand=mobile&query=berkeley+ca"
+wget -q --output-document=/tmp/x "http://rss.wunderground.com/auto/rss_full/global/stations/94701.1.99999.xml?units=both"
+wget -q --output-document=/tmp/0.png "http://radar.weather.gov/ridge/lite/N0R/MUX_7.png"
+wget -q --output-document=/tmp/1.png "http://radar.weather.gov/ridge/lite/N0R/MUX_6.png"
+wget -q --output-document=/tmp/2.png "http://radar.weather.gov/ridge/lite/N0R/MUX_5.png"
+wget -q --output-document=/tmp/3.png "http://radar.weather.gov/ridge/lite/N0R/MUX_4.png"
+wget -q --output-document=/tmp/4.png "http://radar.weather.gov/ridge/lite/N0R/MUX_3.png"
+wget -q --output-document=/tmp/5.png "http://radar.weather.gov/ridge/lite/N0R/MUX_2.png"
+wget -q --output-document=/tmp/6.png "http://radar.weather.gov/ridge/lite/N0R/MUX_1.png"
+wget -q --output-document=/tmp/7.png "http://radar.weather.gov/ridge/lite/N0R/MUX_0.png"
+* delete psp/clockoverlay.xml
+<overlay format='%l:%M%P %a %d%b%Y' x='1' y='220' width='220' height='25' textsize='20'/>
+
+* speech in debugchumby
