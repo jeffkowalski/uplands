@@ -1,3 +1,6 @@
+MACHINE=flud
+USER=pi
+
 all:
 
 .PHONY: install uninstall remote-install remote-uninstall perl-modules
@@ -5,8 +8,11 @@ all:
 install: perl-modules
 	-service flud stop
 	cp flud /usr/sbin
+	chmod +x /usr/sbin/flud
 	cp logrotate.d-flud /etc/logrotate.d/flud
+	chmod +x /etc/logrotate.d/flud
 	cp init.d-flud /etc/init.d/flud
+	chmod +x /etc/init.d/flud
 	update-rc.d flud defaults 99
 	service flud start
 
@@ -27,11 +33,11 @@ remote-install:
 	flud/logrotate.d-flud \
 	flud/flud \
 	flud/Makefile \
-	| ssh pi@raspberrypi tar xvf - )
-	ssh pi@raspberrypi "cd ~pi/flud; sudo make install"
+	| ssh $(USER)@$(MACHINE) tar xvf - )
+	ssh $(USER)@$(MACHINE) "cd ~/flud; sudo make install"
 
 remote-uninstall:
-	ssh pi@raspberrypi "cd ~pi/flud; sudo make uninstall"
+	ssh $(USER)@$(MACHINE) "cd ~/flud; sudo make uninstall"
 
 #
 # The following targets satisfy dependencies of flud, which may
@@ -80,7 +86,7 @@ Device-BCM2835:: /usr/local/lib/libbcm2835.a
 
 HTTP-Daemon::    gcc-4.7
 
-PERLMODULES = HTTP::Daemon Proc::PID::File Log::Log4perl Device::BCM2835 Proc::Daemon
+PERLMODULES = HTTP::Daemon Proc::PID::File Log::Log4perl Device::BCM2835 Proc::Daemon HTML::Entities
 
 define PERLMODULE_template
 ifneq ($(shell perl -e "eval q{use $(1); 1;} && print q(found)"),found)

@@ -21,13 +21,12 @@ use Device::BCM2835;
 use POSIX qw(uname);
 use Storable;
 
-
 my $foreground = 0;
 my $debug      = 0;
 GetOptions ('foreground' => \$foreground,
             'debug'      => \$debug);
 
-my $conf = q(
+my $conf = '
     log4perl.logger.foreground         = DEBUG, Screen
     log4perl.logger.daemon             = INFO, Logfile
 
@@ -41,7 +40,7 @@ my $conf = q(
     log4perl.appender.Screen           = Log::Log4perl::Appender::Screen
     log4perl.appender.Screen.stderr    = 0
     log4perl.appender.Screen.layout    = Log::Log4perl::Layout::SimpleLayout
-);
+';
 
 unless ($foreground) {
     die 'Must run as root to daemonize, or with --foreground' unless $< == 0;
@@ -73,9 +72,10 @@ my $CALENDAR_UPDATE_INTERVAL = ( 1 * 60 * 1000); # millis
 my $STATUS_UPDATE_INTERVAL   =              500; # millis
 
 # Connect the shift register pins to these GPIO pins.
-my $shift_pin = &Device::BCM2835::RPI_GPIO_P1_11; # -> SH_CP 11 (shift clock)
-my $store_pin = &Device::BCM2835::RPI_GPIO_P1_13; # -> ST_CP 12 (storage clock)
-my $data_pin  = &Device::BCM2835::RPI_GPIO_P1_15; # -> DS    14 (data in)
+my $shift_pin = &Device::BCM2835::RPI_GPIO_P1_07; # Clock D6 -> SH_CP 11 (shift clock)
+my $store_pin = &Device::BCM2835::RPI_GPIO_P1_15; # Latch D7 -> ST_CP 12 (storage clock)
+my $data_pin  = &Device::BCM2835::RPI_GPIO_P1_13; # Data  D5 -> DS    14 (data in)
+my $noe_pin   = &Device::BCM2835::RPI_GPIO_P1_11; # ~OE   A1 -> ~OE   13 (not output enable)
 # connect rPi 2 5v  to VCC 16
 # connect rPi 6 GND to GND  8
 # connect rPi 6 GND to ~OE 13 (output enable, active low) to ground
@@ -213,19 +213,23 @@ sub initValves {
     Device::BCM2835::init() or $log->logdie ('could not init library');
 
     Device::BCM2835::gpio_fsel ($data_pin,
-                                &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
+                              &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
     Device::BCM2835::gpio_fsel ($shift_pin,
-                                &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
+                              &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
     Device::BCM2835::gpio_fsel ($store_pin,
-                                &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
+                              &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
+    Device::BCM2835::gpio_fsel ($noe_pin,
+                              &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
 
     Device::BCM2835::gpio_write ($data_pin,  0);
     Device::BCM2835::gpio_write ($shift_pin, 0);
     Device::BCM2835::gpio_write ($store_pin, 0);
+    Device::BCM2835::gpio_write ($noe_pin,   0);
 }
 
 
 sub commitValves {
+    Device::BCM2835::gpio_write ($shift_pin, 0);
     Device::BCM2835::gpio_write ($store_pin, 0);
     for (my $ii = 8; $ii > 0; --$ii) {
         Device::BCM2835::gpio_write ($shift_pin, 0);
