@@ -67,9 +67,9 @@ $SIG{TERM} = sub { $log->info ('caught SIGTERM: exiting gracefully'); $keep_goin
 my $SECS_PER_MIN  = 60;
 my $SECS_PER_HOUR = 60 * 60;
 
-my $WEATHER_UPDATE_INTERVAL  = (15 * 60 * 1000); # millis
-my $CALENDAR_UPDATE_INTERVAL = ( 1 * 60 * 1000); # millis
-my $STATUS_UPDATE_INTERVAL   =              500; # millis
+my $WEATHER_UPDATE_INTERVAL  = (30 * $SECS_PER_MIN); # seconds
+my $CALENDAR_UPDATE_INTERVAL = (15 * $SECS_PER_MIN); # seconds
+my $STATUS_UPDATE_INTERVAL   =                    1; # seconds
 
 # Connect the shift register pins to these GPIO pins.
 my $shift_pin = &Device::BCM2835::RPI_GPIO_P1_07; # Clock D6 -> SH_CP 11 (shift clock)
@@ -108,9 +108,6 @@ my $pop     :shared     = 0;
 my $trigger :shared     = 0;
 my $valveOn :shared     = 0;  # 1-based; 0 means "all off"
 
-sub millis { return time * 1000; }
-
-
 sub timestamp {
     my ($time) = @_;
     my ($sec,$min,$hour,$mday,$mon,$year) = gmtime($time);
@@ -134,7 +131,7 @@ sub printStatus {
   else {
       $log->trace (sprintf ('%d%%', $pop));
   }
-  $last_status_print = millis();
+  $last_status_print = time;
 }
 
 
@@ -178,7 +175,7 @@ sub checkWeather {
     else {
         $log->error ('error getting weather');
     }
-    $last_weather_check = millis();
+    $last_weather_check = time;
 }
 
 
@@ -193,7 +190,7 @@ sub checkCalendar {
               "?fields=entry(gd:when,title[text()='flud'])" .
               '&singleevents=true&prettyprint=true&max-results=1&orderby=starttime&sortorder=a&' .
               '&start-min=' . timestamp(time) .
-              '&start-max=' . timestamp(time + $SECS_PER_HOUR);
+              '&start-max=' . timestamp(time + 2 * $CALENDAR_UPDATE_INTERVAL);
     $log->trace ($url);
     my $event = HTTP::Tiny->new->get($url)->{content};
     $log->trace ($event);
@@ -204,7 +201,7 @@ sub checkCalendar {
                 (($zone_sign eq '-' ? -1 : 1) * ($zone_hour * $SECS_PER_HOUR + $zone_min * $SECS_PER_MIN));
     }
     $semaphore->up;
-    $last_calendar_check = millis();
+    $last_calendar_check = time;
 }
 
 
@@ -272,7 +269,7 @@ sub advanceValves {
                              $valveOn,
                              $config->{valve_specs}->[$valveOn-1]->{name},
                              $config->{valve_specs}->[$valveOn-1]->{duration}));
-        $trigger = time() + $config->{valve_specs}->[$valveOn-1]->{duration} * $SECS_PER_MIN;
+        $trigger = time + $config->{valve_specs}->[$valveOn-1]->{duration} * $SECS_PER_MIN;
     }
     $semaphore->up;
 
@@ -394,16 +391,16 @@ threads->create (\&run_webserver);
 
 while ($keep_going) {
     if (0) {}
-    elsif (!$valveOn && (!$last_weather_check  || (millis() - $last_weather_check > $WEATHER_UPDATE_INTERVAL))) {
+    elsif (!$valveOn && (!$last_weather_check  || (time - $last_weather_check >= $WEATHER_UPDATE_INTERVAL))) {
         checkWeather();
     }
-    elsif (!$valveOn && (!$last_calendar_check || (millis() - $last_calendar_check > $CALENDAR_UPDATE_INTERVAL))) {
+    elsif (!$valveOn && (!$last_calendar_check || (time - $last_calendar_check >= $CALENDAR_UPDATE_INTERVAL))) {
         checkCalendar();
     }
     elsif ($trigger && $trigger < time) {
         advanceValves();
     }
-    elsif (!$last_status_print || (millis() - $last_status_print > $STATUS_UPDATE_INTERVAL)) {
+    elsif (!$last_status_print || (time - $last_status_print >= $STATUS_UPDATE_INTERVAL)) {
         printStatus();
     }
     sleep (1);
