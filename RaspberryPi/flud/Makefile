@@ -86,7 +86,7 @@ Device-BCM2835:: /usr/local/lib/libbcm2835.a
 
 HTTP-Daemon::    gcc-4.7
 
-PERLMODULES = HTTP::Daemon Proc::PID::File Log::Log4perl Device::BCM2835 Proc::Daemon HTML::Entities
+PERLMODULES = HTTP::Daemon Proc::PID::File Log::Log4perl Device::BCM2835 Proc::Daemon HTML::Entities JSON::Any
 
 define PERLMODULE_template
 ifneq ($(shell perl -e "eval q{use $(1); 1;} && print q(found)"),found)

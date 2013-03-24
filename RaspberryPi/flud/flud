@@ -14,6 +14,7 @@ use HTTP::Daemon;
 use HTTP::Status;
 use HTTP::Response;
 use HTML::Entities;
+use JSON::Any;
 use threads;
 use threads::shared;
 use Thread::Semaphore;
@@ -90,6 +91,7 @@ unless (defined $config) {
                cosm_feed           => undef,
                cosm_apikey         => undef,
                zipcode             => undef,
+               rain_threshold      => undef,
                valve_specs => [map { {name=>"valve $_", duration=>1} } 1..8]};
     open CONF, ">$conf_file";
     print CONF Data::Dumper->Dump([$config], ['$config']);
@@ -104,9 +106,9 @@ my $last_calendar_check = 0;
 my $last_time_sync      = 0;
 
 my $semaphore = new Thread::Semaphore;
-my $pop     :shared     = 0;
-my $trigger :shared     = 0;
-my $valveOn :shared     = 0;  # 1-based; 0 means "all off"
+my $rainfall :shared    = 0;
+my $trigger  :shared    = 0;
+my $valveOn  :shared    = 0;  # 1-based; 0 means "all off"
 
 sub timestamp {
     my ($time) = @_;
@@ -124,12 +126,12 @@ sub printStatus {
                             ($trigger - $current) % $SECS_PER_MIN));
   }
   elsif ($trigger > $current) {
-      $log->debug (sprintf ('%d%% %02d:%02d', $pop,
+      $log->debug (sprintf ('%f in %02d:%02d', $rainfall,
                             ($trigger - $current) / $SECS_PER_MIN,
                             ($trigger - $current) % $SECS_PER_MIN));
   }
   else {
-      $log->trace (sprintf ('%d%%', $pop));
+      $log->trace (sprintf ('%f in', $rainfall));
   }
   $last_status_print = time;
 }
@@ -161,16 +163,20 @@ sub putCosmData {
 sub checkWeather {
     return unless defined $config->{wunderground_apikey} && defined $config->{zipcode};
     $log->info ("retrieving weather for zipcode '$config->{zipcode}'");
+    $rainfall = 0;
     my $url = 'http://api.wunderground.com/api/' . $config->{wunderground_apikey} .
               '/forecast/q/' .
               $config->{zipcode} . '.json';
     $log->trace ($url);
     my $weather = HTTP::Tiny->new->get($url)->{content};
     $log->trace ($weather);
-    if ($weather =~ /\"pop\":(\d+)/) {
-        $pop = $1;
-        $log->info ("chance of rain = $pop%");
-        putCosmData (0, $pop);
+    my $data = JSON::Any->jsonToObj($weather);
+    if ($data) {
+      foreach (@{$data->{forecast}->{simpleforecast}->{forecastday}}) {
+        $rainfall += $_->{qpf_night}->{in} + $_->{qpf_night}->{in};
+      }
+      $log->info ("rainfall = $rainfall in");
+      putCosmData (0, $rainfall);
     }
     else {
         $log->error ('error getting weather');
@@ -279,13 +285,13 @@ sub advanceValves {
 
 sub run_webserver {
     my $sock = IO::Socket::INET->new (PeerAddr => 'example.com',
-                                   PeerPort => 80,
-                                   Proto    => 'tcp');
+                                      PeerPort => 80,
+                                      Proto    => 'tcp');
     my $localip = $sock->sockhost;
     my $d = HTTP::Daemon->new (ReuseAddr => 1,
-                             LocalAddr => $localip,
-                             LocalPort => 8888,
-                             Listen    => 20) || die;
+                               LocalAddr => $localip,
+                               LocalPort => 8888,
+                               Listen    => 20) || die;
 
     $log->info ('web server started at ' . $d->sockhost() . ':' .$d->sockport());
 
@@ -303,7 +309,7 @@ sub send_index {
     my $body = join ('',
                      'Server timestamp = ', time, '<br>',
                      'Next trigger = ', $trigger, '<br>',
-                     "Chance of precipitation is $pop%<br>",
+                     "Forecasted rainfall = $rainfall in<br>",
                      '<br>',
                      "Valves <form method='POST'>");
     for (my $ii = 0; $ii < scalar @{$config->{valve_specs}}; ++$ii) {
@@ -314,11 +320,12 @@ sub send_index {
     }
     $body .= "<br>";
     $body .= "Google calendar XML <input type='text' name='gcal' value='" .
-            encode_entities("http://www.google.com/calendar/feeds/$config->{google_feed}\@group.calendar.google.com/private-$config->{google_private}/full") . "' /><br>";
+      encode_entities("http://www.google.com/calendar/feeds/$config->{google_feed}\@group.calendar.google.com/private-$config->{google_private}/full") . "' /><br>";
     $body .= "Wunderground API key<input type='text' name='wunderground_apikey' value='$config->{wunderground_apikey}' /><br>";
     $body .= "Zipcode <input type='text' name='zipcode' value='$config->{zipcode}' /><br>";
     $body .= "Cosm API key<input type='text' name='cosm_apikey' value='$config->{cosm_apikey}' /><br>";
     $body .= "Cosm feed id<input type='text' name='cosm_feed' value='$config->{cosm_feed}' /><br>";
+    $body .= "Rain threshold<input type='text' name='rain_threshold' value='$config->{rain_threshold}' /><br>";
     $body .= "<input type='hidden' name='h' />";
     $body .= "<input type='submit' value='Submit' /></form>";
     $body .= "<form action='advance'><input type='submit' value='Advance' /></form>";
@@ -362,7 +369,7 @@ sub process_one_req {
                 $private =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
                 $config->{google_private} = $private;
             }
-            foreach my $name (qw(wunderground_apikey zipcode cosm_apikey cosm_feed)) {
+            foreach my $name (qw(wunderground_apikey zipcode cosm_apikey cosm_feed rain_threshold)) {
                 while ($content =~ s/${name}=(\d+)&//) {
                     my $value = $1;
                     $value =~ s/\+/ /g;
@@ -391,16 +398,22 @@ threads->create (\&run_webserver);
 
 while ($keep_going) {
     if (0) {}
-    elsif (!$valveOn && (!$last_weather_check  || (time - $last_weather_check >= $WEATHER_UPDATE_INTERVAL))) {
+    elsif (!$valveOn && (time - $last_weather_check >= $WEATHER_UPDATE_INTERVAL)) {
         checkWeather();
     }
-    elsif (!$valveOn && (!$last_calendar_check || (time - $last_calendar_check >= $CALENDAR_UPDATE_INTERVAL))) {
+    elsif (!$valveOn && (time - $last_calendar_check >= $CALENDAR_UPDATE_INTERVAL)) {
         checkCalendar();
     }
     elsif ($trigger && $trigger < time) {
-        advanceValves();
+        if ($valveOn || $rainfall <= $config->{rain_threshold}) {
+            advanceValves();
+        }
+        else {
+            $log->info ("rain delay");
+            $trigger += $WEATHER_UPDATE_INTERVAL;
+        }
     }
-    elsif (!$last_status_print || (time - $last_status_print >= $STATUS_UPDATE_INTERVAL)) {
+    elsif (time - $last_status_print >= $STATUS_UPDATE_INTERVAL) {
         printStatus();
     }
     sleep (1);
