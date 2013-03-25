@@ -31,14 +31,29 @@ sub main {
 }
 
 
+sub timestamp {
+    my ($time) = @_;
+    my ($sec,$min,$hour,$mday,$mon,$year) = gmtime($time);
+    return sprintf ('%04d-%02d-%02dT%02d:%02d:%02dZ', $year+1900, $mon+1, $mday, $hour, $min, $sec);
+}
+
+
 sub read_calendar {
     my ($junk1, $junk2, $junk3, $day, $month, $year) = localtime(time);
     my $date = sprintf("%04d-%02d-%02d", $year+1900, $month+1, $day);
 
     # see http://code.google.com/apis/gdata/docs/2.0/reference.html#PartialResponse
     # see http://code.google.com/apis/calendar/data/2.0/reference.html#Calendar_feeds
-    my $url = qq|https://www.google.com/calendar/feeds/${google_feed}\@group.calendar.google.com/private-${google_private}/full?fields=entry(gd:when,title[text()="wakeup"])&singleevents=true&prettyprint=true&max-results=30&orderby=starttime&sortorder=a&start-min=${date}T00:00:00.000-08:00&start-max=${date}T23:59:59.000-08:00|;
+    my $url = 'http://www.google.com/calendar/feeds/' .
+              ${google_feed} . '@group.calendar.google.com/' .
+              'private-' . ${google_private} . '/full' .
+              '?fields=entry(gd:when,title[text()="wakeup"])' .
+              '&singleevents=true&prettyprint=true&max-results=1&orderby=starttime&sortorder=a' .
+              '&start-min=' . timestamp(time) .
+              '&start-max=' . timestamp(time + 24 * 60 * 60 - 1);
+    #print $url, "\n";
     my $content = `curl --silent --insecure --globoff '$url'`;
+    #print $content, "\n";
     my $alarm = undef;
     if ($content =~ /<gd:when.*startTime='.*?T(\d{2}):(\d{2}):.*?'/m) {
         $alarm = {
@@ -49,7 +64,7 @@ sub read_calendar {
           'children_hash' => {},
           'properties' => {
             'when' => 'daily',
-            'action_param' => 'E8D1B6C0-0FB0-11DF-8AED-001E681DF646',
+            'action_param' => '',
             'time' => $1*60+$2,
             'arg' => 'directurl',
             'name' => sprintf ("Google Wakeup %02d:%02d", $1, $2),
@@ -57,7 +72,7 @@ sub read_calendar {
             'backupDelay' => '5',
             'auto_dismiss' => '0',
             'snooze' => '10',
-            'action' => 'profile',
+            'action' => '',
             'type' => 'audio',
             'backup' => '1',
             'param' => '&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;',
@@ -66,7 +81,7 @@ sub read_calendar {
            }
         };
     }
-#    print Dumper $alarm;
+    #print $alarm, "\n";
 
     return $alarm;
 }
@@ -125,12 +140,12 @@ sub save_alarm_file {
 __END__
 
 /psp/alarms
-
 <alarms>
-  <alarm name="" backupDelay="5" backup="1" action_param="" action="" auto_dismiss="0" param_description="Gong" param="" arg="Gong" type="beep" duration="30" snooze="5" enabled="0" time="525" when="daily" />
-  <alarm name="Weekdays at 6:30 am" backupDelay="5" backup="1" action_param="E8D1B6C0-0FB0-11DF-8AED-001E681DF646" action="profile" auto_dismiss="0" param_description="My Streams: KQED Radio" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" arg="directurl" type="audio" duration="60" snooze="10" enabled="0" time="390" when="weekday" />
-  <alarm name="Weekdays at 7:00 am" backupDelay="5" backup="1" action_param="E8D1B6C0-0FB0-11DF-8AED-001E681DF646" action="profile" auto_dismiss="0" param_description="My Streams: KQED Radio" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" arg="directurl" type="audio" duration="60" snooze="10" enabled="0" time="420" when="weekday" />
-  <alarm name="Weekdays at 7:30 am" backupDelay="5" backup="1" action_param="E8D1B6C0-0FB0-11DF-8AED-001E681DF646" action="profile" auto_dismiss="0" param_description="My Streams: KQED Radio" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" arg="directurl" type="audio" duration="60" snooze="10" enabled="0" time="450" when="weekday" />
-  <alarm name="Weekdays at 8:00 am" backupDelay="5" backup="1" action_param="E8D1B6C0-0FB0-11DF-8AED-001E681DF646" action="profile" auto_dismiss="0" param_description="My Streams: KQED Radio" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" arg="directurl" type="audio" duration="60" snooze="10" enabled="0" time="480" when="weekday" />
-  <alarm name="Weekdays at 8:30 am" backupDelay="5" backup="1" action_param="E8D1B6C0-0FB0-11DF-8AED-001E681DF646" action="profile" auto_dismiss="0" param_description="My Streams: KQED Radio" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" arg="directurl" type="audio" duration="60" snooze="10" enabled="1" time="510" when="weekday" />
+  <alarm when="daily" action_param="" time="525" arg="Gong" name="" duration="30" backupDelay="5" auto_dismiss="0" snooze="5" action="" type="beep" backup="1" param="" enabled="0" param_description="Gong" />
+  <alarm action_param="" when="daily" arg="directurl" time="480" name="Google Wakeup 08:00" duration="60" backupDelay="5" auto_dismiss="0" snooze="10" action="" type="audio" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" backup="1" param_description="My Streams: KQED Radio" enabled="1" />
+  <alarm when="weekday" action_param="" time="390" arg="directurl" name="Weekdays at 6:30 am" duration="60" backupDelay="5" auto_dismiss="0" snooze="10" action="" type="audio" backup="1" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" enabled="0" param_description="My Streams: KQED Radio" />
+  <alarm when="weekday" action_param="" time="420" arg="directurl" name="Weekdays at 7:00 am" duration="60" backupDelay="5" auto_dismiss="0" snooze="10" action="" type="audio" backup="1" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" enabled="0" param_description="My Streams: KQED Radio" />
+  <alarm when="weekday" action_param="" time="450" arg="directurl" name="Weekdays at 7:30 am" duration="60" backupDelay="5" auto_dismiss="0" snooze="10" action="" type="audio" backup="1" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" enabled="0" param_description="My Streams: KQED Radio" />
+  <alarm when="weekday" action_param="" time="480" arg="directurl" name="Weekdays at 8:00 am" duration="60" backupDelay="5" auto_dismiss="0" snooze="10" action="" type="audio" backup="1" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" enabled="0" param_description="My Streams: KQED Radio" />
+  <alarm when="weekday" action_param="" time="510" arg="directurl" name="Weekdays at 8:30 am" duration="60" backupDelay="5" auto_dismiss="0" snooze="10" action="" type="audio" backup="1" param="&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;" enabled="0" param_description="My Streams: KQED Radio" />
 </alarms>
