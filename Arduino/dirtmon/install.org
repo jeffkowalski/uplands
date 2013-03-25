@@ -1,0 +1,16 @@
+* Install Arduino IDE
+#+BEGIN_SRC sh
+sudo apt-get install arduino
+#+END_SRC
+Then run arduino once to set up default preferences file
+* Setup for Arduino.mk
+#+BEGIN_SRC sh
+sudo apt-get install cpanminus # for installing perl modules
+sudo cpanm YAML                # for ard-parse-boards
+sudo apt-get install screen    # for "make monitor" target
+sudo apt-get install libdevice-serialport-perl # for ard-reset-arduino use of Device::SerialPort
+#+END_SRC
+* To install on JeeNode plugged into USB0
+#+BEGIN_SRC sh
+sudo make ARDUINO_PORT=/dev/ttyUSB0 upload
+#+END_SRC
