@@ -63,25 +63,25 @@ sub read_calendar {
           'children' => [],
           'children_hash' => {},
           'properties' => {
-            'when' => 'daily',
-            'action_param' => '',
-            'time' => $1*60+$2,
-            'arg' => 'directurl',
             'name' => sprintf ("Google Wakeup %02d:%02d", $1, $2),
-            'duration' => '60',
             'backupDelay' => '5',
-            'auto_dismiss' => '0',
-            'snooze' => '10',
-            'action' => '',
-            'type' => 'audio',
             'backup' => '1',
+            'action_param' => '',
+            'action' => '',
+            'auto_dismiss' => '0',
+            'param_description' => 'My Streams: KQED Radio',
             'param' => '&lt;stream url=&quot;http://www.kqed.org/listen/live/mp3/kqedradio.pls&quot; id=&quot;0001&quot; mimetype=&quot;audio/x-scpls&quot; name=&quot;KQED Radio&quot; /&gt;',
+            'arg' => 'directurl',
+            'type' => 'audio',
+            'duration' => '60',
+            'snooze' => '10',
             'enabled' => '1',
-            'param_description' => 'My Streams: KQED Radio'
+            'time' => $1*60+$2,
+            'when' => 'daily'
            }
         };
     }
-    #print $alarm, "\n";
+    print $alarm->{name}, "\n";
 
     return $alarm;
 }
