@@ -81,7 +81,7 @@ sub read_calendar {
            }
         };
     }
-    print $alarm->{name}, "\n";
+    print $alarm->{properties}->{name}, "\n";
 
     return $alarm;
 }
