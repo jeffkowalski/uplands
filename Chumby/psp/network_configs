@@ -1,0 +1,1 @@
+<configurations><configuration allocation="dhcp" key="uplands_airnet" encoding="ascii" encryption="AES" auth="WPAPSK" hwaddr="00:23:69:56:48:E1" ssid="airnet" type="wlan" /></configurations>

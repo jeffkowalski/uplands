@@ -1,35 +1,41 @@
+* tangle all with C-c C-v t (org-babel-tangle) , or with prefix tangle current block
+
 * Download Zurk, unzip and copy to usb
 http://sourceforge.net/projects/zurk/files/
+* Steps
+:PROPERTIES:
+:comments: org
+:tangle:   yes
+:shebang: "#!/bin/bash"
+:results: silent
+:END:
 
-* Copy files to usb before boot
+** unzip zurk to usb
 #+BEGIN_SRC sh
-cat > psp/network_config
-<configuration gateway="" ip="" nameserver1="" encryption="AES" key="uplands_airnet" hwaddr="00:23:69:56:48:E1" nameserver2="" auth="WPAPSK" netmask="" type="wlan" ssid="airnet" allocation="dhcp" encoding="ascii" />
-
-cat > psp/network_configs
-<configurations><configuration allocation="dhcp" key="uplands_airnet" encoding="ascii" encryption="AES" auth="WPAPSK" hwaddr="00:23:69:56:48:E1" ssid="airnet" type="wlan" /></configurations>
-
-touch psp/start_sshd
+unzip -d $1 zurk_chumby_one.zip
 #+END_SRC sh
 
-* Boot USB
-* Copy files
+** Copy files
 #+BEGIN_SRC sh
-scp $workspace/uplands/Chumby/alarmring.swf root@chumby-classic:/mnt/usb
-scp -r $workspace/uplands/Chumby/google-wakeup     root@chumby-classic:/mnt/usb
-
-scp $workspace/uplands/Chumby/psp-alarms           root@chumby-classic:/psp/alarms
-scp $workspace/uplands/Chumby/psp-clock_format     root@chumby-classic:/psp/clock_format
-scp $workspace/uplands/Chumby/psp-clockoverlay.xml root@chumby-classic:/psp/clock-overlay.xml
-scp $workspace/uplands/Chumby/psp-daymode.sh       root@chumby-classic:/psp/daymode.sh
-scp $workspace/uplands/Chumby/psp-nightmode.sh     root@chumby-classic:/psp/nightmode.sh
-scp $workspace/uplands/Chumby/psp-url_streams      root@chumby-classic:/psp/url_streams
+# cp alarmring.swf      $1
+cp -r google-wakeup     $1
+cp psp/*                $1/psp/
 #+END_SRC sh
-* adjust crontab
+
+** adjust crontab
+#+BEGIN_SRC sh
+sed -i.bak '/^#BEGIN_CUSTOM/,/^#END_CUSTOM/d' $1/psp/crontabs/root
+cat >> $1/psp/crontabs/root <<END_ROOT
+#BEGIN_CUSTOM
 1 0,1 * * * /mnt/usb/google-wakeup/google-wakeup.pl
 0 22 * * * /psp/nightmode.sh
 0 6 * * * /psp/daymode.sh
-* adjust weather settings in psp/zwapi.sh
+#END_CUSTOM
+END_ROOT
+rm -f $1/psp/crontabs/root.bak
+#+END_SRC
+
+** adjust weather settings in psp/zwapi.sh
 http://rss.wunderground.com/auto/rss_full/stations/94705.1.99999.xml?units=both
 http://mobile.wunderground.com/cgi-bin/findweather/getForecast?brand=mobile_english&query=berkeley%20ca
 wget -q --output-document=/tmp/zwapi.html "http://m.wund.com/cgi-bin/findweather/getForecast?brand=mobile&query=berkeley+ca"
@@ -42,32 +48,14 @@ wget -q --output-document=/tmp/4.png "http://radar.weather.gov/ridge/lite/N0R/MU
 wget -q --output-document=/tmp/5.png "http://radar.weather.gov/ridge/lite/N0R/MUX_2.png"
 wget -q --output-document=/tmp/6.png "http://radar.weather.gov/ridge/lite/N0R/MUX_1.png"
 wget -q --output-document=/tmp/7.png "http://radar.weather.gov/ridge/lite/N0R/MUX_0.png"
-* speech in debugchumby
-* restore Flip Clock
-tar xOf $workspace/uplands/Chumby/octopus.tar octopus/stage3/9A8B8BDA-61A6-11DD-BF39-001E681DFAC2 | ssh root@chumby-classic "cat > /mnt/usb/www/9A8B8BDA-61A6-11DD-BF39-001E681DFAC2"
-tar xOf $workspace/uplands/Chumby/octopus.tar octopus/stage4/9A8B77E4-61A6-11DD-BF39-001E681DFAC2 | ssh root@chumby-classic "cat > /mnt/usb/www/9A8B77E4-61A6-11DD-BF39-001E681DFAC2"
-tar xOf $workspace/uplands/Chumby/octopus.tar octopus/stage4/FA6A17A0-6585-11DD-8C46-001E681DF646 | ssh root@chumby-classic "cat > /mnt/usb/www/FA6A17A0-6585-11DD-8C46-001E681DF646"
 
-add to /mnt/usb/lighty/html/xml/profiles/profiles0
-    <widget_instance id="24">
-      <name>12 Hour Flip Clock - Black</name>
-      <widget id="24">
-        <name>12 Hour Flip Clock - Black</name>
-        <description>This is the official version of my Flip Clock for the Chumby.
+** speech in debugchumby
 
-        Get free clocks for your own website at www.adamdorman.com.</description>
-        <version>1.0</version>
-        <mode mode="timeout" time="180"/>
-        <access sendable="true" access="public" virtualable="true" deleteable="true"/>
-        <user username="McConnell"/>
-        <thumbnail href="file:////mnt/usb/www/9A8B77E4-61A6-11DD-BF39-001E681DFAC2" contenttype="image/jpeg"/>
-        <template href="file:////mnt/usb/www/9A8B8BDA-61A6-11DD-BF39-001E681DFAC2" contenttype="application/x-shockwave-flash"/>
-        <movie href="file:////mnt/usb/www/FA6A17A0-6585-11DD-8C46-001E681DF646" contenttype="application/x-shockwave-flash"/>
-        <rating count="54" rating="3.537"/>
-      </widget>
-      <access access="private"/>
-      <mode mode="default" time="180"/>
-      <widget_parameters>
-      </widget_parameters>
-      <rating rating="0"/>
-    </widget_instance>
+** restore Flip Clock
+#+BEGIN_SRC sh
+tar xOf octopus.tar octopus/stage3/9A8B8BDA-61A6-11DD-BF39-001E681DFAC2 > $1/www/9A8B8BDA-61A6-11DD-BF39-001E681DFAC2
+tar xOf octopus.tar octopus/stage4/9A8B77E4-61A6-11DD-BF39-001E681DFAC2 > $1/www/9A8B77E4-61A6-11DD-BF39-001E681DFAC2
+tar xOf octopus.tar octopus/stage4/FA6A17A0-6585-11DD-8C46-001E681DF646 > $1/www/FA6A17A0-6585-11DD-8C46-001E681DF646
+test -f $1/lighty/html/xml/profiles/profiles0.orig || mv $1/lighty/html/xml/profiles/profiles0 $1/lighty/html/xml/profiles/profiles0.orig
+cp profiles0 $1/lighty/html/xml/profiles/profiles0
+#+END_SRC

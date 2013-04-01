@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profile id="0">
+  <name>offline-mode</name>
+  <description/>
+  <user username="offline-user">
+    <profiles>
+      <profile unaccepted="0" name="offline-mode"  id="0" />
+      <profile unaccepted="0" name="Squeezebox"    id="1" />
+      <profile unaccepted="0" name="Kitchen Timer" id="2" />
+    </profiles>
+  </user>
+  <skin href="/xml/skins/00000000-0000-0000-0000-000000000001" name="Standard" id="00000000-0000-0000-0000-000000000001"/>
+  <access access="private" id="2"/>
+  <widget_instances>
+    <widget_instance id="1">
+      <name>12 Hour Flip Clock - Black</name>
+      <widget id="1">
+        <name>12 Hour Flip Clock - Black</name>
+        <description>This is the official version of my Flip Clock for the Chumby.
+
+        Get free clocks for your own website at www.adamdorman.com.</description>
+        <version>1.0</version>
+        <mode mode="timeout" time="180"/>
+        <access sendable="true" access="public" virtualable="true" deleteable="true"/>
+        <user username="McConnell"/>
+        <thumbnail href="file:////mnt/usb/www/9A8B77E4-61A6-11DD-BF39-001E681DFAC2" contenttype="image/jpeg"/>
+        <template href="file:////mnt/usb/www/9A8B8BDA-61A6-11DD-BF39-001E681DFAC2" contenttype="application/x-shockwave-flash"/>
+        <movie href="file:////mnt/usb/www/FA6A17A0-6585-11DD-8C46-001E681DF646" contenttype="application/x-shockwave-flash"/>
+        <rating count="54" rating="3.537"/>
+      </widget>
+      <access access="private"/>
+      <mode mode="default" time="180"/>
+      <widget_parameters>
+      </widget_parameters>
+      <rating rating="0"/>
+    </widget_instance>
+  </widget_instances>
+</profile>
