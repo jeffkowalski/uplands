@@ -24,6 +24,7 @@ while (1) {
     # print;
 
     # byte -> 0  1  2  3  4  5  6   7   8  9  10  11  12
+    #         ====  ----------  - --- ---  -----  ------
     # eg   -> OK 2  2  0  0  0  2 115 117  0   0   0   0
     #  long ping;      // 32-bit counter
     #  byte id :7;     // identity, should be different for each node
