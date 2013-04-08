@@ -14,3 +14,9 @@ sudo apt-get install libdevice-serialport-perl # for ard-reset-arduino use of De
 #+BEGIN_SRC sh
 sudo make ARDUINO_PORT=/dev/ttyUSB0 upload
 #+END_SRC
+* Notes
+** Garden Bot soil sensor
+see [[http://gardenbot.org/howTo/soilMoisture/][Garden Bot]] description
+[[http://gardenbot.org/howTo/soilMoisture/soilMoisture_localCircuit_w-flip-flop_big.png][Circuit diagram]]
+** Radio Blip sampling and transmission code
+see [[https://github.com/jcw/jeelib/blob/master/examples/RF12/radioBlip2/radioBlip2.ino][Radio Blip 2 code]]

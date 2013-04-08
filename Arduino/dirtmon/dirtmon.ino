@@ -5,14 +5,14 @@
 #include <JeeLib.h>
 #include <avr/sleep.h>
 
-Port one (1);
+#define BOOST      0     // measure battery on analog pin if 1, else vcc after
 
-#define BOOST     0   // measure battery on analog pin if 1, else vcc after
+#define BLIP_NODE  2     // wireless node ID to use for sending blips
+#define BLIP_GRP   212   // wireless net group to use for sending blips
+#define BLIP_ID    2     // set this to a unique ID to disambiguate multiple nodes
+#define SEND_MODE  2     // set to 3 if fuses are e=06/h=DE/l=CE, else set to 2
 
-#define BLIP_NODE 2     // wireless node ID to use for sending blips
-#define BLIP_GRP  212   // wireless net group to use for sending blips
-#define BLIP_ID   2     // set this to a unique ID to disambiguate multiple nodes
-#define SEND_MODE 2     // set to 3 if fuses are e=06/h=DE/l=CE, else set to 2
+#define FLIP_TIMER 1000
 
 struct {
   long ping;      // 32-bit counter
@@ -20,8 +20,10 @@ struct {
   byte boost :1;  // whether compiled for boost chip or not
   byte vcc1;      // VCC before transmit, 1.0V = 0 .. 6.0V = 250
   byte vcc2;      // battery voltage (BOOST=1), or VCC after transmit (BOOST=0)
-  word sensor;    // sensor
+  word sensor1;   // sensor reading 1
+  word sensor2;   // sensor reading 2
 } payload;
+
 
 volatile bool adcDone;
 
@@ -31,62 +33,104 @@ ISR(ADC_vect) { adcDone = true; }
 // this must be defined since we're using the watchdog for low-power waiting
 ISR(WDT_vect) { Sleepy::watchdogEvent(); }
 
-static byte vccRead (byte count =4) {
-  set_sleep_mode(SLEEP_MODE_ADC);
+static byte vccRead (byte count = 4) {
+  set_sleep_mode (SLEEP_MODE_ADC);
   // use VCC as AREF and internal bandgap as input
-#if defined(__AVR_ATtiny84__)
-  ADMUX = 33;
-#else
-  ADMUX = bit(REFS0) | 14;
-#endif
-  bitSet(ADCSRA, ADIE);
+  #if defined(__AVR_ATtiny84__)
+     ADMUX = 33;
+  #else
+     ADMUX = bit(REFS0) | 14;
+  #endif
+  bitSet (ADCSRA, ADIE);
   while (count-- > 0) {
     adcDone = false;
     while (!adcDone)
-      sleep_mode();
+      sleep_mode ();
   }
-  bitClear(ADCSRA, ADIE);
+  bitClear (ADCSRA, ADIE);
   // convert ADC readings to fit in one byte, i.e. 20 mV steps:
   //  1.0V = 0, 1.8V = 40, 3.3V = 115, 5.0V = 200, 6.0V = 250
   return (55U * 1024U) / (ADC + 1) - 50;
 }
 
+
+Port soilSensor (1);      // P1.AIO
+Port voltageFlipPin1 (2); // P2.DIO
+Port voltageFlipPin2 (3); // P3.DIO
+
+
 void setup() {
   cli();
   CLKPR = bit(CLKPCE);
-#if defined(__AVR_ATtiny84__)
-  CLKPR = 0; // div 1, i.e. speed up to 8 MHz
-#else
-  CLKPR = 1; // div 2, i.e. slow down to 8 MHz
-#endif
+  #if defined(__AVR_ATtiny84__)
+    CLKPR = 0; // div 1, i.e. speed up to 8 MHz
+  #else
+    CLKPR = 1; // div 2, i.e. slow down to 8 MHz
+  #endif
   sei();
 
-#if defined(__AVR_ATtiny84__)
+  #if defined(__AVR_ATtiny84__)
     // power up the radio on JMv3
-    bitSet(DDRB, 0);
-    bitClear(PORTB, 0);
-#endif
+    bitSet (DDRB, 0);
+    bitClear (PORTB, 0);
+  #endif
 
-  rf12_initialize(BLIP_NODE, RF12_915MHZ, BLIP_GRP);
+  rf12_initialize (BLIP_NODE, RF12_915MHZ, BLIP_GRP);
   // see http://tools.jeelabs.org/rfm12b
-  rf12_control(0xC040); // set low-battery level to 2.2V i.s.o. 3.1V
-  rf12_sleep(RF12_SLEEP);
+  rf12_control (0xC040); // set low-battery level to 2.2V i.s.o. 3.1V
+  rf12_sleep (RF12_SLEEP);
 
   payload.id    = BLIP_ID;
   payload.boost = BOOST;
 
-  one.mode2(INPUT);
-  one.digiWrite2(1);
+  soilSensor.mode2 (INPUT);
+  voltageFlipPin1.mode (OUTPUT);
+  voltageFlipPin2.mode (OUTPUT);
+
+  soilSensor.digiWrite2 (LOW);
+  voltageFlipPin1.digiWrite (LOW);
+  voltageFlipPin2.digiWrite (LOW);
 }
+
+
+static void setSensorPolarity (int polarity) {
+  if (polarity == 1) {
+    voltageFlipPin1.digiWrite (HIGH);
+    voltageFlipPin2.digiWrite (LOW);
+  }
+  else if (polarity == -1) {
+    voltageFlipPin1.digiWrite (LOW);
+    voltageFlipPin2.digiWrite (HIGH);
+  }
+  else {
+    voltageFlipPin1.digiWrite (LOW);
+    voltageFlipPin2.digiWrite (LOW);
+  }
+}
+
+
+static void readSensors () {
+  setSensorPolarity (1);
+  delay (FLIP_TIMER);
+  payload.sensor1 = soilSensor.anaRead();
+
+  setSensorPolarity (-1);
+  delay (FLIP_TIMER);
+  payload.sensor2 = 1023 - soilSensor.anaRead(); // invert
+
+  setSensorPolarity (0);
+}
+
 
 static byte sendPayload () {
   ++payload.ping;
 
-  rf12_sleep(RF12_WAKEUP);
-  rf12_sendNow(0, &payload, sizeof payload);
-  rf12_sendWait(SEND_MODE);
-  rf12_sleep(RF12_SLEEP);
+  rf12_sleep (RF12_WAKEUP);
+    rf12_sendNow (0, &payload, sizeof payload);
+    rf12_sendWait (SEND_MODE);
+  rf12_sleep (RF12_SLEEP);
 }
+
 
 // This code tries to implement a good survival strategy: when power is low,
 // don't transmit - when power is even lower, don't read out the VCC level.
@@ -106,30 +150,29 @@ static byte sendPayload () {
 #define VCC_FINAL 70  // <= 2.4V - send anyway, might be our last swan song
 
 void loop() {
-  byte vcc = payload.vcc1 = vccRead();
-  one.digiWrite2(1);
-  payload.sensor = one.anaRead();
-  one.digiWrite2(0);
+  byte vcc = payload.vcc1 = vccRead ();
+
+  readSensors ();
 
   if (vcc <= VCC_FINAL) { // hopeless, maybe we can get one last packet out
-    sendPayload();
+    sendPayload ();
     vcc = 1; // don't even try reading VCC after this send
-#if !BOOST
-    payload.vcc2 = vcc;
-#endif
+    #if !BOOST
+      payload.vcc2 = vcc;
+    #endif
   }
 
   if (vcc >= VCC_OK) { // enough energy for normal operation
-#if BOOST
-    payload.vcc2 = analogRead(0) >> 2;
-#endif
-    sendPayload();
-#if !BOOST
-    vcc = payload.vcc2 = vccRead(); // measure and remember the VCC drop
-#endif
+    #if BOOST
+      payload.vcc2 = analogRead (0) >> 2;
+    #endif
+    sendPayload ();
+    #if !BOOST
+      vcc = payload.vcc2 = vccRead (); // measure and remember the VCC drop
+    #endif
   }
 
-  byte minutes = VCC_SLEEP_MINS(vcc);
+  byte minutes = VCC_SLEEP_MINS (vcc);
   while (minutes-- > 0)
-    Sleepy::loseSomeTime(600); // 60000
+    Sleepy::loseSomeTime (600); // 60000
 }

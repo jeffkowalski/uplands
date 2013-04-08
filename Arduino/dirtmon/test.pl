@@ -23,14 +23,15 @@ while (1) {
   while ($_ = <DEV>) {
     # print;
 
-    #  0 1 2 3 4 5 6   7   8 9 0
-    # OK 2 2 0 0 0 2 115 117 0 0
+    # byte -> 0  1  2  3  4  5  6   7   8  9  10  11  12
+    # eg   -> OK 2  2  0  0  0  2 115 117  0   0   0   0
     #  long ping;      // 32-bit counter
     #  byte id :7;     // identity, should be different for each node
     #  byte boost :1;  // whether compiled for boost chip or not
     #  byte vcc1;      // VCC before transmit, 1.0V = 0 .. 6.0V = 250
     #  byte vcc2;      // battery voltage (BOOST=1), or VCC after transmit (BOOST=0)
-    #  word sensor;    // sensor
+    #  word sensor;    // sensor1
+    #  word sensor;    // sensor2
 
     if (/^OK 2/) {
         my @rec = split(' ', $_);
@@ -38,8 +39,9 @@ while (1) {
         my $id    = $rec[6];
         my $vcc1  = $rec[7] / 250.0 * 5.0 + 1.0;
         my $vcc2  = $rec[8] / 250.0 * 5.0 + 1.0;
-        my $sensor = $rec[9] + $rec[10] * 256;
-        print join (' ', $ping, $id, $vcc1, $vcc2, $sensor), "\n";
+        my $sensor1 = $rec[9] + $rec[10] * 256;
+        my $sensor2 = $rec[11] + $rec[12] * 256;
+        print join (' ', $ping, $id, $vcc1, $vcc2, $sensor1, $sensor2), "\n";
         # system (q"spd-say --voice-type female2 ouch\!");
       }
   }
