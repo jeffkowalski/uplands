@@ -19,6 +19,7 @@ use threads;
 use threads::shared;
 use Thread::Semaphore;
 use Device::BCM2835;
+use Device::SerialPort;
 use POSIX qw(uname);
 use Storable;
 
@@ -106,9 +107,10 @@ my $last_calendar_check = 0;
 my $last_time_sync      = 0;
 
 my $semaphore = new Thread::Semaphore;
-my $rainfall :shared    = 0;
-my $trigger  :shared    = 0;
-my $valveOn  :shared    = 0;  # 1-based; 0 means "all off"
+my $rainfall   :shared  = 0;
+my $trigger    :shared  = 0;
+my $dirtmon    :shared  = 1;  # set to 0 to stop watching dirtmon
+my $valveOn    :shared  = 0;  # 1-based; 0 means "all off"
 
 sub timestamp {
     my ($time) = @_;
@@ -176,7 +178,7 @@ sub checkWeather {
         $rainfall += $_->{qpf_night}->{in} + $_->{qpf_night}->{in};
       }
       $log->info ("rainfall = $rainfall in");
-      putCosmData (0, $rainfall);
+      putCosmData ("forecast.rainfall", $rainfall);
     }
     else {
         $log->error ('error getting weather');
@@ -242,14 +244,15 @@ sub commitValves {
         Device::BCM2835::gpio_write ($shift_pin, 1);
     }
     Device::BCM2835::gpio_write ($store_pin, 1);
-    putCosmData (1, $valveOn);
+    for (my $ii = 8; $ii > 0; --$ii) {
+        putCosmData ("valve." . $ii, $valveOn == $ii ? 1 : 0);
+    }
 }
 
 
 sub stopValves {
     $log->info ('stopping valves');
     $semaphore->down;
-    putCosmData (1, $valveOn);
     $valveOn = 0;
     $trigger = 0;
     $semaphore->up;
@@ -259,7 +262,6 @@ sub stopValves {
 
 sub advanceValves {
     $semaphore->down;
-    putCosmData (1, $valveOn);
 
     do {
         ++$valveOn;
@@ -280,6 +282,51 @@ sub advanceValves {
     $semaphore->up;
 
     commitValves();
+}
+
+
+sub dirtmon {
+  my $PORT = '/dev/ttyUSB0';
+
+  my $ob = Device::SerialPort->new ($PORT) || $log->logdie ("Cannot create device $PORT: $!");
+  $ob->baudrate(57600)   || $log->logdie ("failed setting baudrate");
+  $ob->parity("none")    || $log->logdie ("failed setting parity");
+  $ob->databits(8)       || $log->logdie ("failed setting databits");
+  $ob->handshake("none") || $log->logdie ("failed setting handshake");
+  $ob->write_settings    || $log->logdie ("no settings");
+  open (DEV, "+<$PORT")  || $log->logdie ("Cannot open $PORT: $_");
+
+  print DEV '1i 212g\n'; # node 1 in group 212
+
+  while ($dirtmon) {
+    while ($_ = <DEV>) {
+      # byte -> 0  1  2  3  4  5  6   7   8  9  10  11  12
+      #         ====  ----------  - --- ---  -----  ------
+      # eg   -> OK 2  2  0  0  0  2 115 117  0   0   0   0
+      #  long ping;      // 32-bit counter
+      #  byte id :7;     // identity, should be different for each node
+      #  byte boost :1;  // whether compiled for boost chip or not
+      #  byte vcc1;      // VCC before transmit, 1.0V = 0 .. 6.0V = 250
+      #  byte vcc2;      // battery voltage (BOOST=1), or VCC after transmit (BOOST=0)
+      #  word sensor;    // sensor1
+      #  word sensor;    // sensor2
+      if (/^OK 2/) {
+        my @rec = split(' ', $_);
+        my $ping  = $rec[2] + $rec[3] * 256 + $rec[4] * 256 * 256 + $rec[5] * 256 * 256 * 256;
+        my $id    = $rec[6];
+        my $vcc1  = $rec[7] / 250.0 * 5.0 + 1.0;
+        my $vcc2  = $rec[8] / 250.0 * 5.0 + 1.0;
+        my $sensor1 = $rec[9] + $rec[10] * 256;
+        my $sensor2 = $rec[11] + $rec[12] * 256;
+        $log->info (join (' ', $ping, $id, $vcc1, $vcc2, $sensor1, $sensor2));
+        putCosmData ("dirtmon1.vcc1", $vcc1);
+        putCosmData ("dirtmon1.vcc2", $vcc2);
+        putCosmData ("dirtmon1.moisture1", $sensor1);
+        putCosmData ("dirtmon1.moisture2", $sensor2);
+      }
+    }
+    sleep 1;
+  }
 }
 
 
@@ -360,17 +407,15 @@ sub process_one_req {
             while ($content =~ s/d(\d+)=(\d+)&//) {
                 $config->{valve_specs}->[$1]->{duration} = int ($2);
             }
-            while ($content =~ s|gcal=http://www.google.com/calendar/feeds/(.*)\@group.calendar.google.com/private-(.*?)/.*?&||) {
-                my ($feed, $private) = ($1, $2);
-                $feed =~ s/\+/ /g;
-                $feed =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-                $config->{google_feed} = $feed;
-                $private =~ s/\+/ /g;
-                $private =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-                $config->{google_private} = $private;
+            while ($content =~ s{gcal=(.*?)&}{}) {
+                my $value = $1;
+                $value =~ s/\+/ /g;
+                $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+                $value =~ m{https?://www\.google\.com/calendar/feeds/(.*)(?:(?:\@)|(?:\%40))group\.calendar\.google\.com/private-(.*?)/.*};
+                ($config->{google_feed}, $config->{google_private}) = ($1, $2);
             }
             foreach my $name (qw(wunderground_apikey zipcode cosm_apikey cosm_feed rain_threshold)) {
-                while ($content =~ s/${name}=(\d+)&//) {
+                while ($content =~ s/${name}=([-\d.A-Za-z]+)&//) {
                     my $value = $1;
                     $value =~ s/\+/ /g;
                     $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
@@ -395,6 +440,7 @@ initValves();
 stopValves();
 
 threads->create (\&run_webserver);
+threads->create (\&dirtmon);
 
 while ($keep_going) {
     if (0) {}
