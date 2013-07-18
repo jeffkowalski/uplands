@@ -1,5 +1,5 @@
-MACHINE=flud
-USER=pi
+REMOTE_MACHINE=flud
+REMOTE_USER=pi
 
 all:
 
@@ -8,11 +8,11 @@ all:
 install: perl-modules
 	-service flud stop
 	cp flud /usr/sbin
-	chmod +x /usr/sbin/flud
+	chmod 0755 /usr/sbin/flud
 	cp logrotate.d-flud /etc/logrotate.d/flud
-	chmod +x /etc/logrotate.d/flud
+	chmod 0644 /etc/logrotate.d/flud
 	cp init.d-flud /etc/init.d/flud
-	chmod +x /etc/init.d/flud
+	chmod 0755 /etc/init.d/flud
 	update-rc.d flud defaults 99
 	service flud start
 
@@ -28,16 +28,16 @@ uninstall:
 
 remote-install:
 	( cd .. ; \
-	tar cvf - \
-	flud/init.d-flud \
-	flud/logrotate.d-flud \
-	flud/flud \
-	flud/Makefile \
-	| ssh $(USER)@$(MACHINE) tar xvf - )
-	ssh $(USER)@$(MACHINE) "cd ~/flud; sudo make install"
+	  tar cvf - \
+	    flud/init.d-flud \
+	    flud/logrotate.d-flud \
+	    flud/flud \
+	    flud/Makefile \
+	  | ssh $(REMOTE_USER)@$(REMOTE_MACHINE) tar xvf - )
+	ssh $(REMOTE_USER)@$(REMOTE_MACHINE) "cd ~/flud; sudo make install"
 
 remote-uninstall:
-	ssh $(USER)@$(MACHINE) "cd ~/flud; sudo make uninstall"
+	ssh $(REMOTE_USER)@$(REMOTE_MACHINE) "cd ~/flud; sudo make uninstall"
 
 #
 # The following targets satisfy dependencies of flud, which may
@@ -70,23 +70,24 @@ endif
 /usr/local/lib/libbcm2835.a : | curl
 	echo install Broadcom BCM 2835 chip library
 	( cd /tmp ; \
-	curl -L http://www.open.com.au/mikem/bcm2835/bcm2835-1.6.tar.gz | \
+	curl -L http://www.airspayce.com/mikem/bcm2835/bcm2835-1.25.tar.gz | \
 	tar zxvf - && \
-	cd bcm2835-1.6 ; \
+	cd bcm2835-1.25 ; \
 	machine=`uname -m` ; \
 	if [ "$machine" = "armv6l" ] ; then ./configure; else ./configure CFLAGS=-fPIC ; fi ; \
 	make clean ; \
 	make ; \
 	make check ; \
 	make install ; \
-	rm -rf bcm2835-1.6* ; \
+	cd /tmp; \
+	rm -rf bcm2835-1.25 ; \
 	)
 
 Device-BCM2835:: /usr/local/lib/libbcm2835.a
 
 HTTP-Daemon::    gcc-4.7
 
-PERLMODULES = HTTP::Daemon Proc::PID::File Log::Log4perl Device::BCM2835 Proc::Daemon HTML::Entities JSON::Any
+PERLMODULES = HTTP::Daemon Proc::PID::File Log::Log4perl Device::BCM2835 Device::SerialPort Proc::Daemon HTML::Entities JSON::Any
 
 define PERLMODULE_template
 ifneq ($(shell perl -e "eval q{use $(1); 1;} && print q(found)"),found)
