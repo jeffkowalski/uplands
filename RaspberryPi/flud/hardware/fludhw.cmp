@@ -1,4 +1,4 @@
-Cmp-Mod V01 Created by CvPcb (2011-nov-30)-testing date = Sat 11 Aug 2012 04:33:24 PM PDT
+Cmp-Mod V01 Created by CvPcb (2011-nov-30)-testing date = Sun 02 Sep 2012 10:25:58 PM PDT
 
 BeginCmp
 TimeStamp = /5026D806;
@@ -15,24 +15,24 @@ IdModule  = SIL-8;
 EndCmp
 
 BeginCmp
-TimeStamp = /5026E9A4;
+TimeStamp = /50443A34;
 Reference = R1;
 ValeurCmp = RESISTOR_4XARRAY_ISOLATED_SIL_REVE_DATE15JUN2010;
 IdModule  = SIL-8;
 EndCmp
 
 BeginCmp
-TimeStamp = /5026EC5D;
+TimeStamp = /50443A27;
 Reference = R2;
-ValeurCmp = RESISTOR_4XARRAY_ISOLATED_REVE_DATE15JUN2010;
+ValeurCmp = RESISTOR_4XARRAY_ISOLATED_SIL_REVE_DATE15JUN2010;
 IdModule  = SIL-8;
 EndCmp
 
 BeginCmp
-TimeStamp = /5026B826;
+TimeStamp = /5026CDBD;
 Reference = U1;
-ValeurCmp = 74HC595;
-IdModule  = DIP-16__300;
+ValeurCmp = TRIAC;
+IdModule  = TO92;
 EndCmp
 
 BeginCmp
@@ -85,10 +85,10 @@ IdModule  = TO92;
 EndCmp
 
 BeginCmp
-TimeStamp = /5026CDBD;
+TimeStamp = /5026B826;
 Reference = U9;
-ValeurCmp = TRIAC;
-IdModule  = TO92;
+ValeurCmp = 74HC595;
+IdModule  = DIP-16__300;
 EndCmp
 
 EndListe
