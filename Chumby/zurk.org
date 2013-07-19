@@ -18,7 +18,6 @@ unzip -d $1 zurk_chumby_one.zip
 ** Copy files
 #+BEGIN_SRC sh
 # cp alarmring.swf      $1
-cp -r google-wakeup     $1
 cp psp/*                $1/psp/
 #+END_SRC sh
 
@@ -27,9 +26,7 @@ cp psp/*                $1/psp/
 sed -i.bak '/^#BEGIN_CUSTOM/,/^#END_CUSTOM/d' $1/psp/crontabs/root
 cat >> $1/psp/crontabs/root <<END_ROOT
 #BEGIN_CUSTOM
-1 0,1 * * * /mnt/usb/google-wakeup/google-wakeup.pl
-0 22 * * * /psp/nightmode.sh
-0 6 * * * /psp/daymode.sh
+1 0,1 * * * /psp/google-wakeup/google-wakeup.pl
 #END_CUSTOM
 END_ROOT
 rm -f $1/psp/crontabs/root.bak
@@ -54,7 +51,7 @@ wget -q --output-document=/tmp/7.png "http://radar.weather.gov/ridge/lite/N0R/MU
 ** restore Flip Clock
 #+BEGIN_SRC sh
 tar xOf octopus.tar octopus/stage3/9A8B8BDA-61A6-11DD-BF39-001E681DFAC2 > $1/www/9A8B8BDA-61A6-11DD-BF39-001E681DFAC2
-tar xOf octopus.tar octopus/stage4/9A8B77E4-61A6-11DD-BF39-001E681DFAC2 > $1/www/9A8B77E4-61A6-11DD-BF39-001E681DFAC2
+tar xOf octopus.tar octopus/stage4/9A8B77E4-61A6-11DD-BF39-001E681DFAC2 > $1/www/9A8B77E4-61A6-11DD-BF39-001E681DFAC2tar xOf octopus.tar octopus/stage4/FA6A17A0-6585-11DD-8C46-001E681DF646 > $1/www/FA6A17A0-6585-11DD-8C46-001E681DF64tar xOf octopus.tar octopus/stage4/FA6A17A0-6585-11DD-8C46-001E681DF646 > $1/www/FA6A17A0-6585-11DD-8C46-001E681DF646tar xOf octopus.tar octopus/stage4/FA6A17A0-6585-11DD-8C46-001E681DF646 > $1/www/FA6A17A0-6585-11DD-8C46-001E681DF646
 tar xOf octopus.tar octopus/stage4/FA6A17A0-6585-11DD-8C46-001E681DF646 > $1/www/FA6A17A0-6585-11DD-8C46-001E681DF646
 test -f $1/lighty/html/xml/profiles/profiles0.orig || mv $1/lighty/html/xml/profiles/profiles0 $1/lighty/html/xml/profiles/profiles0.orig
 cp profiles0 $1/lighty/html/xml/profiles/profiles0
