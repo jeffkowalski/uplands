@@ -13,18 +13,20 @@ install: perl-modules
 	chmod 0644 /etc/logrotate.d/flud
 	cp init.d-flud /etc/init.d/flud
 	chmod 0755 /etc/init.d/flud
-	update-rc.d flud defaults 99
+	-cp flud.conf /etc/flud.conf
+	-chmod 0644 /etc/flud.conf
+	insserv --verbose flud
 	service flud start
 
 uninstall:
 	-service flud stop
-	update-rc.d -f flud remove
-	rm -f /etc/init.d/flud
-	rm -f /etc/logrotate.d/flud
-	rm -f /usr/sbin/flud
-	rm -f /etc/flud.conf
-	rm -f /var/log/flud.log*
-	rm -f /var/run/flud.pid
+	insserv --verbose --remove flud
+	-rm -f /etc/init.d/flud
+	-rm -f /etc/logrotate.d/flud
+	-rm -f /usr/sbin/flud
+#	-rm -f /etc/flud.conf
+	-rm -f /var/log/flud.log*
+	-rm -f /var/run/flud.pid
 
 remote-install:
 	( cd .. ; \
@@ -33,6 +35,7 @@ remote-install:
 	    flud/logrotate.d-flud \
 	    flud/flud \
 	    flud/Makefile \
+            `test -f flud/flud.conf && echo flud/flud.conf` \
 	  | ssh $(REMOTE_USER)@$(REMOTE_MACHINE) tar xvf - )
 	ssh $(REMOTE_USER)@$(REMOTE_MACHINE) "cd ~/flud; sudo make install"
 
