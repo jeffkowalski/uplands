@@ -371,52 +371,66 @@ sub send_index {
     $response->header ('Content-Type' => 'text/html');
 
     my $body = join (' ',
-                     '<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>',
-                     '<script>',
-                     'function indicateValve (num) {
-                       $("div.running").hide ();
-                       $("div.running").filter (function (index) {return index + 1 == num;}).show ("fast");
-                      }',
-                     'function startValve (num) {
-                       $.ajax({
-                          url: "/api/startValve",
-                          data: {
-                            valve: num + 1
-                          },
-                          success: function (data) {
-                             $("#status").html ("<strong>success " + data + "</strong>");
-                             indicateValve (data);
-                          }
-                        });
-                      }',
-                     'function stop () {
-                       $.ajax({
-                          url: "/api/stop",
-                          success: function (data) {
-                             $("#status").html ("<strong>success " + data + "</strong>");
-                             indicateValve (data);
-                          }
-                        });
-                      }',
-                     'function advance () {
-                       $.ajax({
-                          url: "/api/advance",
-                          success: function (data) {
-                             $("#status").html ("<strong>success " + data + "</strong>");
-                             indicateValve (data);
-                          }
-                        });
-                      }',
-                     '$(document).ready(function () {
-                        indicateValve (' . $valveOn . ')
-                      });',
-                     '</script>',
-                     '<div id="status"></div>',
-                     'Server timestamp = ', time, '<br>',
-                     'Next trigger = ', $trigger, '<br>',
-                     "Forecasted rainfall = $rainfall in<br>",
-                     '<br>',
-                     "Valves <form method='POST'>");
+        '<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>',
+        '<script>',
+        'function indicateValve (num) {
+          $("div.running").hide ();
+          $("div.running").filter (function (index) {return index + 1 == num;}).show ("fast");
+         }',
+        'function startValve (num) {
+          $.ajax({
+             url: "/api/startValve",
+             data: {
+               valve: num + 1
+             },
+             success: function (data) {
+                $("#status").html ("<strong>success " + data + "</strong>");
+                indicateValve (data);
+             }
+           });
+         }',
+        'function stop () {
+          $.ajax({
+             url: "/api/stop",
+             success: function (data) {
+                $("#status").html ("<strong>success " + data + "</strong>");
+                indicateValve (data);
+             }
+           });
+         }',
+        'function advance () {
+          $.ajax({
+             url: "/api/advance",
+             success: function (data) {
+                $("#status").html ("<strong>success " + data + "</strong>");
+                indicateValve (data);
+             }
+           });
+         }',
+        'function refreshStatus () {
+          $.ajax({
+             url: "/api/getStatus",
+             dataType: "json",
+             success: function (data) {
+                $("#timestamp").html(data.timestamp);
+                $("#trigger").html(data.trigger);
+                $("#rainfall").html(data.rainfall);
+                indicateValve (data.valveOn);
+             }
+           });
+         }',
+        '$(document).ready(function () {
+           refreshStatus ();
+           setInterval (refreshStatus, 30 * 1000);
+         });',
+        '</script>',
+        '<div id="status"></div>',
+        'Server timestamp =    <div style="display:inline" id="timestamp">', time,      '</div><br>',
+        'Next trigger =        <div style="display:inline" id="trigger">',   $trigger,  '</div><br>',
+        'Forecasted rainfall = <div style="display:inline" id="rainfall">',  $rainfall, '</div> in<br>',
+        '<br>',
+        "Valves <form method='POST'>"
+    );
     for (my $ii = 0; $ii < scalar @{$config->{valve_specs}}; ++$ii) {
         $body .= "<input type='text' name='n$ii' value='" . encode_entities($config->{valve_specs}->[$ii]->{name}) . "' />";
         $body .= "<input type='text' name='d$ii' value='$config->{valve_specs}->[$ii]->{duration}' />";
@@ -449,25 +463,31 @@ sub process_one_req {
         $log->trace (Data::Dumper->Dump([$r], ['$r']));
         if ($r->method eq "GET") {
             if ($r->uri->path eq "/api/advance") {
-                advanceValves();
+                advanceValves ();
                 my $response = HTTP::Response->new(200);
                 $response->header ('Content-Type' => 'text/html');
                 $response->content ($valveOn);
-                $client->send_response($response);
+                $client->send_response ($response);
             } elsif ($r->uri->path eq "/api/stop") {
-                stopValves();
+                stopValves ();
                 my $response = HTTP::Response->new(200);
                 $response->header ('Content-Type' => 'text/html');
                 $response->content ($valveOn);
-                $client->send_response($response);
+                $client->send_response ($response);
             } elsif ($r->uri->path =~ "/api/startValve") {
                 startValve ($r->uri->query_param('valve'));
                 my $response = HTTP::Response->new(200);
                 $response->header ('Content-Type' => 'text/html');
                 $response->content ($valveOn);
-                $client->send_response($response);
-            }
-            else {
+                $client->send_response ($response);
+            } elsif ($r->uri->path =~ "/api/getStatus") {
+                my $response = HTTP::Response->new(200);
+                $response->header ('Content-Type' => 'text/json');
+                my $now = time;
+                my $content = qq({"timestamp" : $now, "trigger" : $trigger, "rainfall" : $rainfall, "valveOn" : $valveOn});
+                $response->content ($content);
+                $client->send_response ($response);
+              } else {
                 send_index ($client);
             }
         }
