@@ -13,6 +13,7 @@ use HTTP::Tiny;
 use HTTP::Daemon;
 use HTTP::Status;
 use HTTP::Response;
+use URI::QueryParam;
 use HTML::Entities;
 use JSON::Any;
 use threads;
@@ -133,7 +134,7 @@ sub printStatus {
                             ($trigger - $current) % $SECS_PER_MIN));
   }
   else {
-      $log->trace (sprintf ('%f in', $rainfall));
+  #    $log->trace (sprintf ('%f in', $rainfall));
   }
   $last_status_print = time;
 }
@@ -273,7 +274,7 @@ sub advanceValves {
         $trigger = 0;
     }
     else {
-        $log->info (sprintf (qq(advancing valves to run #%d - "%s" for %d minutes),
+        $log->info (sprintf (qq(advancing to run valve #%d - "%s" for %d minutes),
                              $valveOn,
                              $config->{valve_specs}->[$valveOn-1]->{name},
                              $config->{valve_specs}->[$valveOn-1]->{duration}));
@@ -282,6 +283,22 @@ sub advanceValves {
     $semaphore->up;
 
     commitValves();
+}
+
+
+sub startValve {
+  my ($valve) = @_;
+
+  $semaphore->down;
+  $valveOn = $valve;
+  $log->info (sprintf (qq(starting valve #%d - "%s" for %d minutes),
+                       $valveOn,
+                       $config->{valve_specs}->[$valveOn-1]->{name},
+                       $config->{valve_specs}->[$valveOn-1]->{duration}));
+  $trigger = time + $config->{valve_specs}->[$valveOn-1]->{duration} * $SECS_PER_MIN;
+  $semaphore->up;
+
+  commitValves();
 }
 
 
@@ -353,7 +370,38 @@ sub send_index {
     my $response = HTTP::Response->new(200);
     $response->header ('Content-Type' => 'text/html');
 
-    my $body = join ('',
+    my $body = join (' ',
+                     '<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>',
+                     '<script>',
+                     'function startValve (num) {
+                       $.ajax({
+                          url: "/api/startValve",
+                          data: {
+                            valve: num
+                          },
+                          success: function( data ) {
+                             $( "#status" ).html( "<strong>success" + data + "</strong>" );
+                          }
+                        });
+                      }',
+                     'function stop (num) {
+                       $.ajax({
+                          url: "/api/stop",
+                          success: function( data ) {
+                             $( "#status" ).html( "<strong>success" + data + "</strong>" );
+                          }
+                        });
+                      }',
+                     'function advance (num) {
+                       $.ajax({
+                          url: "/api/advance",
+                          success: function( data ) {
+                             $( "#status" ).html( "<strong>success" + data + "</strong>" );
+                          }
+                        });
+                      }',
+                     '</script>',
+                     '<div id="status"></div>',
                      'Server timestamp = ', time, '<br>',
                      'Next trigger = ', $trigger, '<br>',
                      "Forecasted rainfall = $rainfall in<br>",
@@ -362,10 +410,13 @@ sub send_index {
     for (my $ii = 0; $ii < scalar @{$config->{valve_specs}}; ++$ii) {
         $body .= "<input type='text' name='n$ii' value='" . encode_entities($config->{valve_specs}->[$ii]->{name}) . "' />";
         $body .= "<input type='text' name='d$ii' value='$config->{valve_specs}->[$ii]->{duration}' />";
+        $body .= "<input type='button' name='s$ii' value='start' onclick='startValve($ii)' />";
         $body .= "\&lt;-- ON" if ($ii + 1 == $valveOn);
         $body .= "<br>";
     }
-    $body .= "<br>";
+    $body .= "<input type='button' value='advance' onclick='advance()' />";
+    $body .= "<input type='button' value='stop' onclick='stop()' />";
+    $body .= "<br><br>";
     $body .= "Google calendar XML <input type='text' name='gcal' value='" .
       encode_entities("http://www.google.com/calendar/feeds/$config->{google_feed}\@group.calendar.google.com/private-$config->{google_private}/full") . "' /><br>";
     $body .= "Wunderground API key<input type='text' name='wunderground_apikey' value='$config->{wunderground_apikey}' /><br>";
@@ -375,8 +426,6 @@ sub send_index {
     $body .= "Rain threshold<input type='text' name='rain_threshold' value='$config->{rain_threshold}' /><br>";
     $body .= "<input type='hidden' name='h' />";
     $body .= "<input type='submit' value='Submit' /></form>";
-    $body .= "<form action='advance'><input type='submit' value='Advance' /></form>";
-    $body .= "<form action='stop'><input type='submit' value='Stop' /></form>";
 
     $response->content($body);
     $client->send_response($response);
@@ -387,14 +436,24 @@ sub process_one_req {
     STDOUT->autoflush(1);
     my $client = shift;
     while (my $r = $client->get_request) {
+        $log->trace (Data::Dumper->Dump([$r], ['$r']));
         if ($r->method eq "GET") {
-            if ($r->uri->path eq "/advance") {
+            if ($r->uri->path eq "/api/advance") {
                 advanceValves();
-            }
-            elsif ($r->uri->path eq "/stop") {
+                my $response = HTTP::Response->new(200);
+                $client->send_response($response);
+            } elsif ($r->uri->path eq "/api/stop") {
                 stopValves();
+                my $response = HTTP::Response->new(200);
+                $client->send_response($response);
+            } elsif ($r->uri->path =~ "/api/startValve") {
+                startValve ($r->uri->query_param('valve'));
+                my $response = HTTP::Response->new(200);
+                $client->send_response($response);
             }
-            send_index ($client);
+            else {
+                send_index ($client);
+            }
         }
         elsif ($r->method eq "POST") {
             my $content = $r->content;
