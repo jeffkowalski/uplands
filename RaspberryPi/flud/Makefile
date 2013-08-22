@@ -20,7 +20,7 @@ install: perl-modules
 
 uninstall:
 	-service flud stop
-	insserv --verbose --remove flud
+	-insserv --verbose --remove flud
 	-rm -f /etc/init.d/flud
 	-rm -f /etc/logrotate.d/flud
 	-rm -f /usr/sbin/flud
