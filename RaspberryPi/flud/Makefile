@@ -97,7 +97,7 @@ ifneq ($(shell perl -e "eval q{use $(1); 1;} && print q(found)"),found)
 perl-modules:: cpanm
 perl-modules:: $(subst ::,-,$(1))
 $(subst ::,-,$(1)) ::
-	cpanm $(1)
+	cpanm --verbose $(1)
 endif
 endef
 
