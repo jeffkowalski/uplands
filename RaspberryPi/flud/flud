@@ -94,6 +94,7 @@ unless (defined $config) {
                cosm_apikey         => undef,
                zipcode             => undef,
                rain_threshold      => undef,
+               moisture_threshold  => undef,
                valve_specs => [map { {name=>"valve $_", duration=>1} } 1..8]};
     open (my $CONF, ">", $conf_file);
     print $CONF Data::Dumper->Dump([$config], ['$config']);
@@ -111,6 +112,8 @@ my $semaphore = new Thread::Semaphore;
 my $rainfall   :shared  = 0;
 my $trigger    :shared  = 0;
 my $dirtmon    :shared  = 1;  # set to 0 to stop watching dirtmon
+my $moisture   :shared  = 0;
+my $voltage    :shared  = 0.0;
 my $valveOn    :shared  = 0;  # 1-based; 0 means "all off"
 
 sub timestamp {
@@ -140,12 +143,17 @@ sub printStatus {
 }
 
 
+sub getCosmURL {
+  return 'http://api.cosm.com/v2/feeds/' . $config->{cosm_feed};
+}
+
+
 sub putCosmData {
     return unless defined $config->{cosm_feed} && defined $config->{cosm_apikey};
     my ($stream, $value) = @_;
 
     $log->debug ('putting cosm data');
-    my $url = 'http://api.cosm.com/v2/feeds/' . $config->{cosm_feed};
+    my $url = getCosmURL();
     my $json = qq( { "version" : "1.0.0", "datastreams" : [ {"id" : "$stream", "current_value" : "$value"} ] } );
     my $response = HTTP::Tiny->new->request ('PUT', $url,
                                              {'headers' => {
@@ -163,20 +171,25 @@ sub putCosmData {
 }
 
 
+sub getWeatherURL {
+  return 'http://api.wunderground.com/api/' . $config->{wunderground_apikey} .
+    '/forecast/q/' .
+    $config->{zipcode} . '.json';
+}
+
+
 sub checkWeather {
     return unless defined $config->{wunderground_apikey} && defined $config->{zipcode};
     $log->info ("retrieving weather for zipcode '$config->{zipcode}'");
     $rainfall = 0;
-    my $url = 'http://api.wunderground.com/api/' . $config->{wunderground_apikey} .
-              '/forecast/q/' .
-              $config->{zipcode} . '.json';
+    my $url = getWeatherURL();
     $log->trace ($url);
     my $weather = HTTP::Tiny->new->get($url)->{content};
     $log->trace ($weather);
     my $data = JSON::Any->jsonToObj($weather);
     if ($data) {
       foreach (@{$data->{forecast}->{simpleforecast}->{forecastday}}) {
-        $rainfall += $_->{qpf_night}->{in} + $_->{qpf_night}->{in};
+        $rainfall += $_->{qpf_allday}->{in};
       }
       $log->info ("rainfall = $rainfall in");
       putCosmData ("forecast.rainfall", $rainfall);
@@ -188,18 +201,23 @@ sub checkWeather {
 }
 
 
+sub getCalendarURL {
+  return 'http://www.google.com/calendar/feeds/' .
+    ${config}->{google_feed} . '@group.calendar.google.com/' .
+    'private-' . ${config}->{google_private} . '/full' .
+    "?fields=entry(gd:when,title[text()='flud'])" .
+    '&singleevents=true&prettyprint=true&max-results=1&orderby=starttime&sortorder=a&' .
+    '&start-min=' . timestamp(time) .
+    '&start-max=' . timestamp(time + 2 * $CALENDAR_UPDATE_INTERVAL);
+}
+
+
 sub checkCalendar {
     return unless $config->{google_feed} && defined $config->{google_private};
     $log->info ('retrieving calendar');
     $semaphore->down;
     $trigger = 0;
-    my $url = 'http://www.google.com/calendar/feeds/' .
-              ${config}->{google_feed} . '@group.calendar.google.com/' .
-              'private-' . ${config}->{google_private} . '/full' .
-              "?fields=entry(gd:when,title[text()='flud'])" .
-              '&singleevents=true&prettyprint=true&max-results=1&orderby=starttime&sortorder=a&' .
-              '&start-min=' . timestamp(time) .
-              '&start-max=' . timestamp(time + 2 * $CALENDAR_UPDATE_INTERVAL);
+    my $url = getCalendarURL();
     $log->trace ($url);
     my $event = HTTP::Tiny->new->get($url)->{content};
     $log->trace ($event);
@@ -340,6 +358,8 @@ sub dirtmon {
         putCosmData ("dirtmon1.vcc2", $vcc2);
         putCosmData ("dirtmon1.moisture1", $sensor1);
         putCosmData ("dirtmon1.moisture2", $sensor2);
+        $moisture = ((1023 - $sensor1) + (1023 - $sensor2)) / 2;
+        $voltage  = ($vcc1 + $vcc2) / 2.0;
       }
     }
     sleep 1;
@@ -429,6 +449,8 @@ sub send_index {
         'Server timestamp =    <div style="display:inline" id="timestamp">', time,      '</div><br>',
         'Next trigger =        <div style="display:inline" id="trigger">',   $trigger,  '</div><br>',
         'Forecasted rainfall = <div style="display:inline" id="rainfall">',  $rainfall, '</div> in<br>',
+        'Soil moisture =       <div style="display:inline" id="moisture">',  $moisture, '</div><br>',
+        'Sensor voltage =      <div style="display:inline" id="voltage">',   $voltage,  '</div>V<br>',
         '<br>',
         "Valves <form method='POST'>"
     );
@@ -444,11 +466,15 @@ sub send_index {
     $body .= "<br><br>";
     $body .= "Google calendar XML <input type='text' name='gcal' value='" .
       encode_entities("http://www.google.com/calendar/feeds/$config->{google_feed}\@group.calendar.google.com/private-$config->{google_private}/full") . "' /><br>";
+    $body .= "<a href='" . getCalendarURL() . "'>View Calendar</a><br>";
     $body .= "Wunderground API key<input type='text' name='wunderground_apikey' value='$config->{wunderground_apikey}' /><br>";
     $body .= "Zipcode <input type='text' name='zipcode' value='$config->{zipcode}' /><br>";
+    $body .= "<a href='" . getWeatherURL() . "'>View Weather</a><br>";
     $body .= "Cosm API key<input type='text' name='cosm_apikey' value='$config->{cosm_apikey}' /><br>";
     $body .= "Cosm feed id<input type='text' name='cosm_feed' value='$config->{cosm_feed}' /><br>";
+    $body .= "<a href='" . getCosmURL() . "'>View Cosm</a><br>";
     $body .= "Rain threshold<input type='text' name='rain_threshold' value='$config->{rain_threshold}' /><br>";
+    $body .= "Moisture threshold<input type='text' name='moisture_threshold' value='$config->{moisture_threshold}' /><br>";
     $body .= "<input type='hidden' name='h' />";
     $body .= "<input type='submit' value='Submit' /></form>";
 
@@ -510,7 +536,7 @@ sub process_one_req {
                 $value =~ m{https?://www\.google\.com/calendar/feeds/(.*)(?:(?:\@)|(?:\%40))group\.calendar\.google\.com/private-(.*?)/.*};
                 ($config->{google_feed}, $config->{google_private}) = ($1, $2);
             }
-            foreach my $name (qw(wunderground_apikey zipcode cosm_apikey cosm_feed rain_threshold)) {
+            foreach my $name (qw(wunderground_apikey zipcode cosm_apikey cosm_feed rain_threshold moisture_threshold)) {
                 while ($content =~ s/${name}=([-\d.A-Za-z]+)&//) {
                     my $value = $1;
                     $value =~ s/\+/ /g;
@@ -547,7 +573,7 @@ while ($keep_going) {
         checkCalendar();
     }
     elsif ($trigger && $trigger < time) {
-        if ($valveOn || $rainfall <= $config->{rain_threshold}) {
+        if ($valveOn || ($rainfall <= $config->{rain_threshold} && $moisture <= $config->{moisture_threshold})) {
             advanceValves();
         }
         else {
