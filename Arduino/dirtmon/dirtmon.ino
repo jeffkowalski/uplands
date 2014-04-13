@@ -174,5 +174,5 @@ void loop() {
 
   byte minutes = VCC_SLEEP_MINS (vcc);
   while (minutes-- > 0)
-    Sleepy::loseSomeTime (600); // 60000
+    Sleepy::loseSomeTime (60000); // 60000
 }
