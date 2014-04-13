@@ -1,1 +1,1 @@
-include ../Arduino-Makefile/arduino-mk/Arduino.mk
+include ../Arduino-Makefile/Arduino.mk
