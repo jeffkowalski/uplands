@@ -353,7 +353,7 @@ sub dirtmon {
         my $vcc2  = $rec[8] / 250.0 * 5.0 + 1.0;
         my $sensor1 = $rec[9] + $rec[10] * 256;
         my $sensor2 = $rec[11] + $rec[12] * 256;
-        $log->info (join (' ', $ping, $id, $vcc1, $vcc2, $sensor1, $sensor2));
+        $log->info (join (' ', 'dirtmon', $ping, $id, $vcc1, $vcc2, $sensor1, $sensor2));
         putCosmData ("dirtmon1.vcc1", $vcc1);
         putCosmData ("dirtmon1.vcc2", $vcc2);
         putCosmData ("dirtmon1.moisture1", $sensor1);
