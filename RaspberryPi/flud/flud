@@ -90,8 +90,8 @@ unless (defined $config) {
     $config = {google_feed         => undef,
                google_private      => undef,
                wunderground_apikey => undef,
-               cosm_feed           => undef,
-               cosm_apikey         => undef,
+               xively_feed         => undef,
+               xively_apikey       => undef,
                zipcode             => undef,
                rain_threshold      => undef,
                moisture_threshold  => undef,
@@ -143,29 +143,29 @@ sub printStatus {
 }
 
 
-sub getCosmURL {
-  return 'http://api.cosm.com/v2/feeds/' . $config->{cosm_feed};
+sub getXivelyURL {
+  return 'http://api.xively.com/v2/feeds/' . $config->{xively_feed};
 }
 
 
-sub putCosmData {
-    return unless defined $config->{cosm_feed} && defined $config->{cosm_apikey};
+sub putXivelyData {
+    return unless defined $config->{xively_feed} && defined $config->{xively_apikey};
     my ($stream, $value) = @_;
 
-    $log->debug ('putting cosm data');
-    my $url = getCosmURL();
+    $log->debug ('putting xively data');
+    my $url = getXivelyURL();
     my $json = qq( { "version" : "1.0.0", "datastreams" : [ {"id" : "$stream", "current_value" : "$value"} ] } );
     my $response = HTTP::Tiny->new->request ('PUT', $url,
                                              {'headers' => {
-                                                            'Host'         => 'api.cosm.com',
-                                                            'X-ApiKey'     => $config->{cosm_apikey},
+                                                            'Host'         => 'api.xively.com',
+                                                            'X-ApiKey'     => $config->{xively_apikey},
                                                             'Content-Type' => 'application/json; charset=UTF-8',
                                                             'Accept'       => 'application/json'},
                                               'content' => $json});
     if ($response->{success}) {
-        $log->trace ("cosm replied '$response->{status}'");
+        $log->trace ("xively replied '$response->{status}'");
     } else {
-        $log->error ("cosm replied '$response->{status}'");
+        $log->error ("xively replied '$response->{status}'");
         $log->trace (Dumper($response));
     }
 }
@@ -192,7 +192,7 @@ sub checkWeather {
         $rainfall += $_->{qpf_allday}->{in};
       }
       $log->info ("rainfall = $rainfall in");
-      putCosmData ("forecast.rainfall", $rainfall);
+      putXivelyData ("forecast.rainfall", $rainfall);
     }
     else {
         $log->error ('error getting weather');
@@ -264,7 +264,7 @@ sub commitValves {
     }
     Device::BCM2835::gpio_write ($store_pin, 1);
     for (my $ii = 8; $ii > 0; --$ii) {
-        putCosmData ("valve." . $ii, $valveOn == $ii ? 1 : 0);
+        putXivelyData ("valve." . $ii, $valveOn == $ii ? 1 : 0);
     }
 }
 
@@ -354,10 +354,10 @@ sub dirtmon {
         my $sensor1 = $rec[9] + $rec[10] * 256;
         my $sensor2 = $rec[11] + $rec[12] * 256;
         $log->info (join (' ', 'dirtmon', $ping, $id, $vcc1, $vcc2, $sensor1, $sensor2));
-        putCosmData ("dirtmon1.vcc1", $vcc1);
-        putCosmData ("dirtmon1.vcc2", $vcc2);
-        putCosmData ("dirtmon1.moisture1", $sensor1);
-        putCosmData ("dirtmon1.moisture2", $sensor2);
+        putXivelyData ("dirtmon1.vcc1", $vcc1);
+        putXivelyData ("dirtmon1.vcc2", $vcc2);
+        putXivelyData ("dirtmon1.moisture1", $sensor1);
+        putXivelyData ("dirtmon1.moisture2", $sensor2);
         $moisture = ((1023 - $sensor1) + (1023 - $sensor2)) / 2;
         $voltage  = ($vcc1 + $vcc2) / 2.0;
       }
@@ -470,9 +470,9 @@ sub send_index {
     $body .= "Wunderground API key<input type='text' name='wunderground_apikey' value='$config->{wunderground_apikey}' /><br>";
     $body .= "Zipcode <input type='text' name='zipcode' value='$config->{zipcode}' /><br>";
     $body .= "<a href='" . getWeatherURL() . "'>View Weather</a><br>";
-    $body .= "Cosm API key<input type='text' name='cosm_apikey' value='$config->{cosm_apikey}' /><br>";
-    $body .= "Cosm feed id<input type='text' name='cosm_feed' value='$config->{cosm_feed}' /><br>";
-    $body .= "<a href='" . getCosmURL() . "'>View Cosm</a><br>";
+    $body .= "Xively API key<input type='text' name='xively_apikey' value='$config->{xively_apikey}' /><br>";
+    $body .= "Xively feed id<input type='text' name='xively_feed' value='$config->{xively_feed}' /><br>";
+    $body .= "<a href='" . getXivelyURL() . "'>View Xively</a><br>";
     $body .= "Rain threshold<input type='text' name='rain_threshold' value='$config->{rain_threshold}' /><br>";
     $body .= "Moisture threshold<input type='text' name='moisture_threshold' value='$config->{moisture_threshold}' /><br>";
     $body .= "<input type='hidden' name='h' />";
@@ -536,7 +536,7 @@ sub process_one_req {
                 $value =~ m{https?://www\.google\.com/calendar/feeds/(.*)(?:(?:\@)|(?:\%40))group\.calendar\.google\.com/private-(.*?)/.*};
                 ($config->{google_feed}, $config->{google_private}) = ($1, $2);
             }
-            foreach my $name (qw(wunderground_apikey zipcode cosm_apikey cosm_feed rain_threshold moisture_threshold)) {
+            foreach my $name (qw(wunderground_apikey zipcode xively_apikey xively_feed rain_threshold moisture_threshold)) {
                 while ($content =~ s/${name}=([-\d.A-Za-z]+)&//) {
                     my $value = $1;
                     $value =~ s/\+/ /g;
