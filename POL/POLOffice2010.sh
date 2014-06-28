@@ -1,4 +1,13 @@
 #!/bin/bash
+
+# See https://appdb.winehq.org/objectManager.php?sClass=version&iId=25161&iTestingId=78464
+
+# to fix
+#    err:module:load_builtin_dll failed to load .so lib for builtin Lwinex11.drv: libSM.so.6: cannot open shared object file: No such file or directory
+# sudo dpkg --add-architecture i386
+# sudo apt-get install libsm6:i386
+
+
 # Author : Tinou
 
 # CHANGELOG
@@ -17,7 +26,7 @@ source "$PLAYONLINUX/lib/sources"
 
 TITLE="Microsoft Office 2010"
 PREFIX="Office2010"
-WORKING_WINE_VERSION="1.7.20"
+WORKING_WINE_VERSION="1.5.29"
 
 # initialize
 POL_GetSetupImages "http://files.playonlinux.com/resources/setups/Office/top.jpg" "http://files.playonlinux.com/resources/setups/Office/left.png" "$TITLE"
@@ -38,12 +47,12 @@ POL_System_SetArch "x86"
 POL_Wine_PrefixCreate "$WORKING_WINE_VERSION"
 
 # install extra components
-POL_Call POL_Install_dotnet20
-POL_Call POL_Install_riched20
-POL_Call POL_Install_msxml6
-POL_Call POL_Function_OverrideDLL native msxml6
+#POL_Call POL_Install_dotnet40
+#POL_Call POL_Install_msxml6
+#POL_Call POL_Function_OverrideDLL native msxml6
+#POL_Call POL_Install_riched20
 #POL_Call POL_Function_OverrideDLL native riched20
-POL_Call POL_Function_OverrideDLL native,builtin urlmon
+#POL_Call POL_Function_OverrideDLL native,builtin urlmon
 Set_OS "winxp"
 POL_Wine_reboot
 
@@ -64,21 +73,35 @@ POL_Wine_WaitExit "$TITLE"
 
 sleep 2
 
+POL_Wine_reboot
+
+POL_Call POL_Function_OverrideDLL native riched20
+POL_Call POL_Function_OverrideDLL native,builtin rpcrt4
+POL_Call POL_Function_OverrideDLL native,builtin winhttp
+POL_Call POL_Function_OverrideDLL native,builtin wininet
+POL_Call POL_Install_dotnet40
+
 # create shortcuts
-POL_Shortcut "WINWORD.EXE" "Microsoft Word 2010"
-POL_Shortcut "EXCEL.EXE" "Microsoft Excel 2010"
-POL_Shortcut "POWERPNT.EXE" "Microsoft Powerpoint 2010"
-POL_Shortcut "ONENOTE.EXE" "Microsoft OneNote 2010"
+#POL_Shortcut "WINWORD.EXE" "Microsoft Word 2010"
+#POL_Shortcut "EXCEL.EXE" "Microsoft Excel 2010"
+#POL_Shortcut "POWERPNT.EXE" "Microsoft Powerpoint 2010"
+#POL_Shortcut "ONENOTE.EXE" "Microsoft OneNote 2010"
 POL_Shortcut "OUTLOOK.EXE" "Microsoft Outlook 2010"
 
-POL_Extension_Write doc "Microsoft Word 2010"
-POL_Extension_Write docx "Microsoft Word 2010"
-POL_Extension_Write xls "Microsoft Excel 2010"
-POL_Extension_Write xlsx "Microsoft Excel 2010"
-POL_Extension_Write ppt "Microsoft Powerpoint 2010"
-POL_Extension_Write pptx "Microsoft Powerpoint 2010"
+#POL_Extension_Write doc "Microsoft Word 2010"
+#POL_Extension_Write docx "Microsoft Word 2010"
+#POL_Extension_Write xls "Microsoft Excel 2010"
+#POL_Extension_Write xlsx "Microsoft Excel 2010"
+#POL_Extension_Write ppt "Microsoft Powerpoint 2010"
+#POL_Extension_Write pptx "Microsoft Powerpoint 2010"
+
+POL_SetupWindow_browse "$(eval_gettext 'Please select the registry file to import')" "$TITLE"
+POL_Wine regedit "$APP_ANSWER"
 
 POL_SetupWindow_message "$(eval_gettext '$TITLE has been installed successfully\n\nIf an installation Windows prevent your programs from running, you must remove and reinstall $TITLE')" "$TITLE"
+
+
+
 
 # clean up
 POL_System_TmpDelete
