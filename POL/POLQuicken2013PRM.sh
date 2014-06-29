@@ -1,7 +1,7 @@
 #!/bin/bash
 # Date : 2014-04-28
 # Last revision : 2014-04-28
-# Wine version used : 1.7.20
+# Wine version used : 1.7.21
 # Distribution used to test : Linux Mint 17 x86_64
 # Author : Jeff Kowalski
 # Dependencies : taskset, locate
@@ -14,7 +14,7 @@ source "$PLAYONLINUX/lib/sources"
 
 TITLE="Quicken Premier 2013"
 PREFIX="quicken"
-WORKING_WINE_VERSION="1.7.20"
+WORKING_WINE_VERSION="1.7.21"
 
 # initialize
 POL_SetupWindow_Init
