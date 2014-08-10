@@ -1,5 +1,4 @@
 #!/bin/bash
-# Wine version used : 1.7.23
 # Distribution used to test : Linux Mint 17 x86_64
 # Author : Jeff Kowalski
 # Dependencies : taskset
@@ -12,7 +11,7 @@ source "$PLAYONLINUX/lib/sources"
 
 TITLE="Evernote"
 PREFIX="evernote"
-WORKING_WINE_VERSION="1.7.23"
+WORKING_WINE_VERSION="1.7.24"
 
 # initialize
 POL_SetupWindow_Init
