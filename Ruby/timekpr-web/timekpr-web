@@ -1,0 +1,108 @@
+#!/usr/bin/ruby
+# -*- mode: ruby -*-
+require 'rubygems'
+require 'webrick'
+
+class WebForm < WEBrick::HTTPServlet::AbstractServlet
+  def do_GET(request, response)
+    status, content_type, body = handle_request(request)
+
+    response.status = status
+    response['Content-Type'] = content_type
+    response.body = body
+  end
+
+  def handle_request(request)
+    f = File.open("/etc/timekpr/parker")
+    index = Time.now.wday
+    limit = f.gets.match(/(\d+)/)[index+1].to_i / 60
+    f.close
+
+    if (total = request.query['total'])
+      total = total.to_i
+      extra = total - limit
+      f = File.open('/var/lib/timekpr/parker.time', 'w')
+      f.write "#{extra * -60}"
+      f.close
+    else
+      f = File.open('/var/lib/timekpr/parker.time', 'r')
+      extra = f.gets.chomp.to_i / -60
+      f.close
+
+      if (add = request.query['add'])
+        add = add.to_i
+        if (limit+extra < 0)
+          extra = -limit
+        end
+        # ASSERT: total >= 0
+        begin
+          extra += add
+        end while (limit+extra < 0)
+        # ASSERT: total >= add
+        f = File.open('/var/lib/timekpr/parker.time', 'w')
+        f.write "#{extra * -60}"
+        f.close
+      end
+
+      total = limit + extra
+    end
+
+    html = <<-END.gsub(/^ {6}/, '')
+    <html>
+    <head>
+      <style type='text/css'>
+        body {
+          color: #DCDCCC;
+          background-color: #3F3F3F;
+          font-size: 24px; font-family: monospace;
+        }
+        td, input {
+          text-align:right;
+          font-size: 24px;
+          font-family: monospace;
+        }
+        td input { width: 100; }
+      </style>
+      <script src='http://code.jquery.com/jquery-1.10.2.min.js'></script>
+      <script type='text/javascript'>
+        $(document).ready(function () {
+          $('#total').change (function (event) {
+            event.preventDefault();
+            $.ajax({
+                url: '/?total='+$('#total').val()
+            });
+            location.reload(true);
+          });
+          $('#add').click (function (event) {
+            event.preventDefault();
+            $.ajax({
+                url: '/?add=15'
+            });
+            location.reload(true);
+          });
+        });
+      </script>
+      </head>
+      <body>
+          <table><tr><td>Granted for #{Time.now.strftime('%A')}</td><td>#{limit}</td></tr>
+                 <tr><td>Earned - spent   </td><td>#{extra}</td></tr>
+                 <tr><td>Total</td>
+                     <td><input type='number' id='total' value='#{total}'/></td>
+                     <td>minutes of play remaining</td></tr>
+          </table>
+        <input type='submit' id='add' value='Add 15 minutes'/>
+        <span id='span'></span>
+      </body>
+      </html>
+    END
+    return 200, 'text/html', html
+  end
+end
+
+if $0 == __FILE__ then
+  server = WEBrick::HTTPServer.new(:Port => 8000)
+  server.mount "/", WebForm
+  trap "INT" do server.shutdown end
+  #WEBrick::Daemon.start
+  server.start
+end
