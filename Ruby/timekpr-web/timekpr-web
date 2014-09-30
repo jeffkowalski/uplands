@@ -1,50 +1,44 @@
 #!/usr/bin/ruby
 # -*- mode: ruby -*-
+
 require 'rubygems'
 require 'webrick'
 
 class WebForm < WEBrick::HTTPServlet::AbstractServlet
+  @@user = 'parker'
   @@timekprdir  = '/etc/timekpr'
   @@timekprwork = '/var/lib/timekpr'
-  @@user = 'parker'
-  @@timef   = @@timekprwork + '/' + @@user + '.time'
+  @@limitf  = @@timekprdir  + '/' + @@user
   @@lockf   = @@timekprdir  + '/' + @@user + '.lock'
+  @@timef   = @@timekprwork + '/' + @@user + '.time'
   @@logoutf = @@timekprwork + '/' + @@user + '.logout'
   @@latef   = @@timekprwork + '/' + @@user + '.late'
 
   def do_GET(request, response)
-    status, content_type, body = handle_request(request)
-
-    response.status = status
-    response['Content-Type'] = content_type
-    response.body = body
+    response.status,
+    response['Content-Type'],
+    response.body = handle_request request
   end
 
   def commit(extra)
-    f = File.open(@@timef, 'w')
-    f.write "#{extra * -60}"
-    f.close
-    FileUtils.rm(@@lockf)
-    FileUtils.rm(@@logoutf)
-    FileUtils.rm(@@latef)
+    File.open(@@timef, 'w') { |f| f.print "#{extra * -60}" }
+    [@@lockf, @@logout, @@latef].each
   end
 
   def handle_request(request)
-    f = File.open(@@timekprdir + '/' + @@user)
-    index = Time.now.wday
-    content = f.gets
-    limit = content.scan(/(\d+)/).flatten[index+1].to_i / 60
+    f = File.open(@@limitf, 'r')
+    limit = f.gets.scan(/(\d+)/).flatten[Time.now.wday+1].to_i / 60
     f.close
 
     if (total = request.query['total'])
       total = total.to_i
       extra = total - limit
-      commit(extra)
+      commit extra
     else
       f = File.open(@@timef, 'r')
       extra = f.gets.chomp.to_i / -60
       f.close
-
+      # here, extra is positive if time remains, negative as it is used up
       if (add = request.query['add'])
         add = add.to_i
         if (limit+extra < 0)
@@ -55,7 +49,7 @@ class WebForm < WEBrick::HTTPServlet::AbstractServlet
           extra += add
         end while (limit+extra < 0)
         # ASSERT: total >= add
-        commit(extra)
+        commit extra
       end
 
       total = limit + extra
