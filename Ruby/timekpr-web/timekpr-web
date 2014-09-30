@@ -4,6 +4,14 @@ require 'rubygems'
 require 'webrick'
 
 class WebForm < WEBrick::HTTPServlet::AbstractServlet
+  @@timekprdir  = '/etc/timekpr'
+  @@timekprwork = '/var/lib/timekpr'
+  @@user = 'parker'
+  @@timef   = @@timekprwork + '/' + @@user + '.time'
+  @@lockf   = @@timekprdir  + '/' + @@user + '.lock'
+  @@logoutf = @@timekprwork + '/' + @@user + '.logout'
+  @@latef   = @@timekprwork + '/' + @@user + '.late'
+
   def do_GET(request, response)
     status, content_type, body = handle_request(request)
 
@@ -12,20 +20,28 @@ class WebForm < WEBrick::HTTPServlet::AbstractServlet
     response.body = body
   end
 
+  def commit(extra)
+    f = File.open(@@timef, 'w')
+    f.write "#{extra * -60}"
+    f.close
+    FileUtils.rm(@@lockf)
+    FileUtils.rm(@@logoutf)
+    FileUtils.rm(@@latef)
+  end
+
   def handle_request(request)
-    f = File.open("/etc/timekpr/parker")
+    f = File.open(@@timekprdir + '/' + @@user)
     index = Time.now.wday
-    limit = f.gets.match(/(\d+)/)[index+1].to_i / 60
+    content = f.gets
+    limit = content.scan(/(\d+)/).flatten[index+1].to_i / 60
     f.close
 
     if (total = request.query['total'])
       total = total.to_i
       extra = total - limit
-      f = File.open('/var/lib/timekpr/parker.time', 'w')
-      f.write "#{extra * -60}"
-      f.close
+      commit(extra)
     else
-      f = File.open('/var/lib/timekpr/parker.time', 'r')
+      f = File.open(@@timef, 'r')
       extra = f.gets.chomp.to_i / -60
       f.close
 
@@ -39,9 +55,7 @@ class WebForm < WEBrick::HTTPServlet::AbstractServlet
           extra += add
         end while (limit+extra < 0)
         # ASSERT: total >= add
-        f = File.open('/var/lib/timekpr/parker.time', 'w')
-        f.write "#{extra * -60}"
-        f.close
+        commit(extra)
       end
 
       total = limit + extra
