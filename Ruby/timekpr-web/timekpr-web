@@ -27,7 +27,7 @@ class WebForm < WEBrick::HTTPServlet::AbstractServlet
 
   def handle_request(request)
     f = File.open(@@limitf, 'r')
-    limit = f.gets.scan(/(\d+)/).flatten[Time.now.wday+1].to_i / 60
+    limit = f.gets.scan(/(\d+)/).flatten[Time.now.wday].to_i / 60
     f.close
 
     if (total = request.query['total'])
