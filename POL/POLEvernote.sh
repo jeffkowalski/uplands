@@ -11,7 +11,7 @@ source "$PLAYONLINUX/lib/sources"
 
 TITLE="Evernote"
 PREFIX="evernote"
-WORKING_WINE_VERSION="1.7.27"
+WORKING_WINE_VERSION="1.7.28"
 
 # initialize
 POL_SetupWindow_Init
