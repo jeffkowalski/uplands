@@ -1,595 +1,852 @@
-#!/usr/bin/perl
+#!/usr/bin/ruby
+# -*- ruby-mode -*-
 
-use strict;
-use warnings;
+# -------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------- [XivelyClient]
+# -------------------------------------------------------------------------------------------
 
-use Getopt::Long;
-use Proc::Daemon;
-use Proc::PID::File;
-use Log::Log4perl qw(get_logger);
-use Data::Dumper;
-use Time::Local;
-use HTTP::Tiny;
-use HTTP::Daemon;
-use HTTP::Status;
-use HTTP::Response;
-use URI::QueryParam;
-use HTML::Entities;
-use JSON::Any;
-use threads;
-use threads::shared;
-use Thread::Semaphore;
-use Device::BCM2835;
-use Device::SerialPort;
-use POSIX qw(uname);
-use Storable;
+require 'xively-rb'
 
-my $foreground = 0;
-my $debug      = 0;
-GetOptions ('foreground' => \$foreground,
-            'debug'      => \$debug);
-
-my $conf = q(
-    log4perl.logger.foreground         = TRACE, Screen
-    log4perl.logger.daemon             = INFO, Logfile
-
-    log4perl.appender.Logfile          = Log::Log4perl::Appender::File
-    log4perl.appender.Logfile.filename = /var/log/flud.log
-    log4perl.appender.Logfile.mode     = append
-    log4perl.appender.Logfile.create_at_logtime = true
-    log4perl.appender.Logfile.layout   = Log::Log4perl::Layout::PatternLayout
-    log4perl.appender.Logfile.layout.ConversionPattern = %d %-5p - %m{chomp}%n
-
-    log4perl.appender.Screen           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.stderr    = 0
-    log4perl.appender.Screen.layout    = Log::Log4perl::Layout::SimpleLayout
-);
-
-unless ($foreground) {
-    die 'Must run as root to daemonize, or with --foreground' unless $< == 0;
-    # Fork and detach from the parent process
-    eval { Proc::Daemon::Init(); };
-    die "Unable to start daemon: $@" if ($@);
-    # Get a PID file
-    die ('Already running as daemon, exiting this instance')
-        if Proc::PID::File->running();
-}
-
-# Start log
-Log::Log4perl::init (\$conf);
-my $log = Log::Log4perl->get_logger ($foreground ? 'foreground' : 'daemon');
-$log->info ('starting');
-
-# Setup signal handlers so that we have time to cleanup before shutting down
-my $keep_going = 1;
-$SIG{INT}  = sub { $log->info ('caught SIGINT: exiting gracefully');  $keep_going = 0; };
-$SIG{QUIT} = sub { $log->info ('caught SIGQUIT: exiting gracefully'); $keep_going = 0; };
-$SIG{TERM} = sub { $log->info ('caught SIGTERM: exiting gracefully'); $keep_going = 0; };
+class XivelyClient
+  def initialize
+    @client = Xively::Client.new $config[:xively_apikey]
+    @url = "/v2/feeds/#{$config[:xively_feed]}"
+  end
+  def put(stream, value)
+    json = { :version => "1.0.0", :datastreams => [ {:id => stream, :current_value => value} ] }.to_json
+    begin
+      response = @client.put @url, :body => json
+    rescue => e
+      $logger.error "can't put in xivelyclient, #{e}"
+    end
+    $logger.debug response
+  end
+end
 
 
-my $SECS_PER_MIN  = 60;
-my $SECS_PER_HOUR = 60 * 60;
+# -------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------- [Valves]
+# -------------------------------------------------------------------------------------------
 
-my $WEATHER_UPDATE_INTERVAL  = (30 * $SECS_PER_MIN); # seconds
-my $CALENDAR_UPDATE_INTERVAL = (15 * $SECS_PER_MIN); # seconds
-my $STATUS_UPDATE_INTERVAL   =                    1; # seconds
+require 'wiringpi'
 
-# Connect the shift register pins to these GPIO pins.
-my $shift_pin = &Device::BCM2835::RPI_GPIO_P1_07; # Clock D6 -> SH_CP 11 (shift clock)
-my $store_pin = &Device::BCM2835::RPI_GPIO_P1_15; # Latch D7 -> ST_CP 12 (storage clock)
-my $data_pin  = &Device::BCM2835::RPI_GPIO_P1_13; # Data  D5 -> DS    14 (data in)
-my $noe_pin   = &Device::BCM2835::RPI_GPIO_P1_11; # ~OE   A1 -> ~OE   13 (not output enable)
-# connect rPi 2 5v  to VCC 16
-# connect rPi 6 GND to GND  8
-# connect rPi 6 GND to ~OE 13 (output enable, active low) to ground
+class Valves
+  SHIFT_PIN =  7 #&Device::BCM2835::RPI_GPIO_P1_07; # Clock D6 -> SH_CP 11 (shift clock)
+  STORE_PIN = 15 #&Device::BCM2835::RPI_GPIO_P1_15; # Latch D7 -> ST_CP 12 (storage clock)
+  DATA_PIN  = 13 #&Device::BCM2835::RPI_GPIO_P1_13; # Data  D5 -> DS    14 (data in)
+  NOE_PIN   = 11 #&Device::BCM2835::RPI_GPIO_P1_11; # ~OE   A1 -> ~OE   13 (not output enable)
+  #                                                 # connect rPi 2 5v  to VCC 16
+  #                                                 # connect rPi 6 GND to GND  8
+  #                                                 # connect rPi 6 GND to ~OE 13 (output enable, active low) to ground
 
+  # Connect the shift register pins to these GPIO pins.
+  def initialize
+    @gpio = nil
+    @on = 0
 
-my $conf_file = '/etc/flud.conf';
-my $config    = do $conf_file;
-unless (defined $config) {
-    $config = {google_feed         => undef,
-               google_private      => undef,
-               wunderground_apikey => undef,
-               xively_feed         => undef,
-               xively_apikey       => undef,
-               zipcode             => undef,
-               rain_threshold      => undef,
-               moisture_threshold  => undef,
-               valve_specs => [map { {name=>"valve $_", duration=>1} } 1..8]};
-    open (my $CONF, ">", $conf_file);
-    print $CONF Data::Dumper->Dump([$config], ['$config']);
-    close $CONF;
-}
-$config = shared_clone ($config);
+    return if $DEBUG || RUBY_PLATFORM != 'arm-linux-eabihf'
 
+    @gpio = WiringPi::GPIO.new
+    [DATA_PIN, SHIFT_PIN, STORE_PIN, NOE_PIN].each { |pin| @gpio.mode pin, OUTPUT }
+    [DATA_PIN, SHIFT_PIN, STORE_PIN, NOE_PIN].each { |pin| @gpio.write pin, 0 }
 
-my $last_weather_check  = 0;
-my $last_status_print   = 0;
-my $last_calendar_check = 0;
-my $last_time_sync      = 0;
+    self.stop
+  end
 
-my $semaphore = new Thread::Semaphore;
-my $rainfall   :shared  = 0;
-my $trigger    :shared  = 0;
-my $dirtmon    :shared  = 1;  # set to 0 to stop watching dirtmon
-my $moisture   :shared  = 0;
-my $voltage    :shared  = 0.0;
-my $valveOn    :shared  = 0;  # 1-based; 0 means "all off"
+  def on
+    return @on
+  end
 
-sub timestamp {
-    my ($time) = @_;
-    my ($sec,$min,$hour,$mday,$mon,$year) = gmtime($time);
-    return sprintf ('%04d-%02d-%02dT%02d:%02d:%02dZ', $year+1900, $mon+1, $mday, $hour, $min, $sec);
-}
+  def off?
+    return @on == 0
+  end
 
+  def commit
+    if @gpio
+      @gpio.write SHIFT_PIN, 0
+      @gpio.write STORE_PIN, 0
+      [8..1].each do |ii|
+        @gpio.write SHIFT_PIN, 0
+        @gpio.write DATA_PIN, @on == ii ? 1 : 0
+        @gpio.write SHIFT_PIN, 1
+      end
+      @gpio.write STORE_PIN, 1
 
-sub printStatus {
-  my $current = time;
-  if ($valveOn) {
-      $log->debug (sprintf ('v%d %02d:%02d',
-                            $valveOn,
-                            ($trigger - $current) / $SECS_PER_MIN,
-                            ($trigger - $current) % $SECS_PER_MIN));
-  }
-  elsif ($trigger > $current) {
-      $log->debug (sprintf ('%f in %02d:%02d', $rainfall,
-                            ($trigger - $current) / $SECS_PER_MIN,
-                            ($trigger - $current) % $SECS_PER_MIN));
-  }
-  else {
-  #    $log->trace (sprintf ('%f in', $rainfall));
-  }
-  $last_status_print = time;
-}
+      [8..1].each do |ii|
+        $xively.put "valve.#{ii}", @on == ii ? 1 : 0
+      end
+    end
+  end
 
+  def advance
+    $semaphore.synchronize {
+      loop do
+        @on += 1
+        break if @on > $config[:valve_specs].length || $config[:valve_specs][@on-1][:duration]
+      end
 
-sub getXivelyURL {
-  return 'http://api.xively.com/v2/feeds/' . $config->{xively_feed};
-}
-
-
-sub putXivelyData {
-    return unless defined $config->{xively_feed} && defined $config->{xively_apikey};
-    my ($stream, $value) = @_;
-
-    $log->debug ('putting xively data');
-    my $url = getXivelyURL();
-    my $json = qq( { "version" : "1.0.0", "datastreams" : [ {"id" : "$stream", "current_value" : "$value"} ] } );
-    my $response = HTTP::Tiny->new->request ('PUT', $url,
-                                             {'headers' => {
-                                                            'Host'         => 'api.xively.com',
-                                                            'X-ApiKey'     => $config->{xively_apikey},
-                                                            'Content-Type' => 'application/json; charset=UTF-8',
-                                                            'Accept'       => 'application/json'},
-                                              'content' => $json});
-    if ($response->{success}) {
-        $log->trace ("xively replied '$response->{status}'");
-    } else {
-        $log->error ("xively replied '$response->{status}'");
-        $log->trace (Dumper($response));
+      if @on > $config[:valve_specs].length
+        $logger.info 'valve schedule complete'
+        @on = 0
+        $trigger = 0
+      else
+        $logger.info "advancing to run valve #{@on} - '#{$config[:valve_specs][@on-1][:name]}' for #{$config[:valve_specs][@on-1][:duration]} minutes"
+        $trigger = Time::now + $config[:valve_specs][@on-1][:duration] * 60 # duration in seconds
+      end
     }
-}
+
+    self.commit
+  end
+
+  def stop
+    $logger.info 'stopping valves'
+    $semaphore.synchronize {
+      @on = 0;
+      $trigger = 0;
+    }
+    self.commit
+  end
+end
 
 
-sub getWeatherURL {
-  return 'http://api.wunderground.com/api/' . $config->{wunderground_apikey} .
-    '/forecast/q/' .
-    $config->{zipcode} . '.json';
-}
+# -------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------- [OAuth]
+# -------------------------------------------------------------------------------------------
+
+require 'google/api_client' # see http://code.google.com/p/google-api-ruby-client/
+require 'yaml'
+
+module OAuth
+  class Google
+    @@config_file=ENV['HOME'] + '/.google-api.yaml'
+    class << self
+      def load
+        if File.exist? @@config_file
+          return YAML.load_file @@config_file
+        else
+          warn "#@@config_file not found"
+          self.abort_config_needed
+        end
+      end
+
+      def abort_config_needed
+        abort <<INTRO_TO_AUTH
+    This utility requires valid oauth credentials and token for your project in the
+    config file '#@@config_file'.
+
+    You can create it by jumping through some oauth hoops by setting up a project and then
+    using the google-api command, provided by the google-api-client gem:
+
+    - Go to Google API Console at https://code.google.com/apis/console/ and set up a project
+      that you will use to access this data.
+     - In the "API Access" section, in the list of "Redirect URIs" include
+       'http://localhost:12736/'.
+     - Get your project's CLIENT_ID and CLIENT_SECRET to use below.
+
+    - Users (including you) will need to grant permissions to access their calendars.
+     - Generate the config file '#@@config_file' by calling the following, which will launch
+       the browser and write the config file:
+    (LD_LIBRARY_PATH=
+     CLIENT_ID=[YOUR-CLIENT_ID]
+     CLIENT_SECRET=[YOUR-CLIENT-SECRET]
+     google-api oauth-2-login --scope=https://www.googleapis.com/auth/calendar --client-id="$CLIENT_ID" --client-secret="$CLIENT_SECRET" )
+INTRO_TO_AUTH
+      end
+    end
+  end
+end
 
 
-sub checkWeather {
-    return unless defined $config->{wunderground_apikey} && defined $config->{zipcode};
-    $log->info ("retrieving weather for zipcode '$config->{zipcode}'");
-    $rainfall = 0;
-    my $url = getWeatherURL();
-    $log->trace ($url);
-    my $weather = HTTP::Tiny->new->get($url)->{content};
-    $log->trace ($weather);
-    my $data = JSON::Any->jsonToObj($weather);
-    if ($data) {
-      foreach (@{$data->{forecast}->{simpleforecast}->{forecastday}}) {
-        $rainfall += $_->{qpf_allday}->{in};
+# -------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------- [Calendar]
+# -------------------------------------------------------------------------------------------
+
+module Calendar
+  class GoogleAPIClient < ::Google::APIClient
+    attr_reader :client
+    def initialize oauth
+      super
+      authorization.client_id     = oauth["client_id"]
+      authorization.client_secret = oauth["client_secret"]
+      authorization.scope         = oauth["scope"]
+      authorization.refresh_token = oauth["refresh_token"]
+      authorization.access_token  = oauth["access_token"]
+
+      # NB: seems authorization.expired? does not work b/c times are not stored
+      # in the yaml -- so we just call authorization.fetch_access_token! on error
+      # see update_token! in http://code.google.com/p/google-api-ruby-client/wiki/OAuth2
+      #if authorization.refresh_token && authorization.expired?
+      #  authorization.fetch_access_token!
+      #end
+    end
+
+    def fetch_data_with_retry api_method, params
+      data = execute_aux(api_method, params).data
+      if data_error data # try refereshing the access token and updating the data
+        authorization.fetch_access_token!
+        data = execute_aux(api_method, params).data
+      end
+      if err = data_error(data) # raise exception if still an error
+        raise RuntimeError, err.to_json
+      end
+      return data
+    end
+
+    private
+    def execute_aux api_method, params
+      execute :api_method => api_method, :parameters => params
+    end
+
+    def data_error data
+      data.to_hash["error"]
+    end
+  end
+
+
+  class GoogleCalendarClient < GoogleAPIClient
+    def events query
+      Enumerator.new {|y| events_aux(query){|event| y << event}}
+    end
+
+    private
+    def events_aux cal_query, &block # requires a block
+      data = list_events cal_query
+      data.items.each &block
+#      if page_token = data.next_page_token
+#        events_aux(cal_query.merge(:pageToken => page_token), &block)
+#      end
+    end
+
+    # Params are as described in:
+    # https://developers.google.com/google-apps/calendar/v3/reference/events/list
+    def list_events params
+      fetch_data_with_retry calendar_service.events.list, params
+    end
+
+    def calendar_service
+      discovered_api 'calendar', 'v3'
+    end
+  end
+end
+
+
+# -------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------ [Updateable]
+# -------------------------------------------------------------------------------------------
+
+class Updateable
+  def initialize
+    $logger.debug "initializing #{self.class}"
+    @update_interval = 0
+    @last_check = Time::new 2000
+  end
+
+  def self.update_interval
+    @update_interval
+  end
+
+  def last_check
+    @last_check
+  end
+
+  def freshen
+    @last_check = Time::now
+  end
+
+  def is_stale?
+    $logger.debug "checking whether #{self.class} (#{@last_check}, #{@update_interval}) is stale"
+    Time::now - @last_check >= @update_interval
+  end
+end
+
+
+# -------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------- [CalendarClient]
+# -------------------------------------------------------------------------------------------
+
+class CalendarClient < Updateable
+  def initialize
+    super
+    @update_interval = 15 * 60 # seconds
+    @cal = Calendar::GoogleCalendarClient.new OAuth::Google.load
+  end
+
+  def trigger
+    trigger = 0
+    $logger.info "retrieving google calendar"
+    @query = {:calendarId   => $config[:calendar_id],
+              :timeMin      => (Time.now -     @update_interval).iso8601,
+              :timeMax      => (Time.now + 2 * @update_interval).iso8601,
+              :singleEvents => "true",
+              :orderBy      => "startTime",
+              :maxResults   => 1,
+              :sortOrder    => 'a'}
+    events = @cal.events @query
+    #events.each{|ev| puts ev['start']['dateTime'] }
+    unless events.first.nil?
+      trigger = events.first['start']['dateTime']
+    end
+    freshen
+    $logger.info "trigger = #{trigger}"
+    return trigger
+  end
+end
+
+
+# -------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------- [WeatherClient]
+# -------------------------------------------------------------------------------------------
+
+require 'wunderground'
+
+class WeatherClient < Updateable
+  def initialize
+    super
+    @update_interval = 60 * 60 # seconds
+    @weather = Wunderground.new $config[:wunderground_apikey]
+  end
+
+  def rainfall
+    rainfall = 0
+    if @weather
+      $logger.info "retrieving weather for zipcode #{$config[:zipcode]}"
+      data = @weather.forecast_for $config[:zipcode]
+      #$logger.debug data;
+      begin
+        data['forecast']['simpleforecast']['forecastday'].each do |forecast|
+          $logger.debug "#{forecast['date']['pretty']} => #{forecast['qpf_allday']['in']}"
+          rainfall += forecast['qpf_allday']['in']
+        end
+      rescue
+        $logger.error "couldn't get weather"
+      end
+    end
+    freshen
+    $logger.info "rainfall = #{rainfall} in"
+    $xively.put "forecast.rainfall", rainfall
+    return rainfall
+  end
+end
+
+
+# -------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------- [Status]
+# -------------------------------------------------------------------------------------------
+
+class Status < Updateable
+  def initialize
+    super
+    @update_interval = 1 * 60 # seconds
+  end
+
+  def print
+    current = Time::now.to_i
+    if !$valves.off?
+      $logger.debug "v#{$valves.on} #{Time.at($trigger - current).utc.strftime '%H:%M:%S'}"
+    elsif $trigger > current
+      $logger.debug "#{$rainfall} in #{Time.at($trigger - current).utc.strftime '%H:%M:%S'}"
+    else
+      $logger.debug "rainfall = #{$rainfall} in"
+    end
+    freshen
+  end
+end
+
+
+# -------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------- [Webserver]
+# -------------------------------------------------------------------------------------------
+
+require 'webrick'
+
+class Webserver
+  def initialize options
+    @webserver = WEBrick::HTTPServer.new :Port => 8888, :Logger => $logger, :AccessLog => []
+    @webserver.mount '/', Simple
+  end
+
+  def self.run! options
+    Webserver.new(options).run!
+  end
+
+  def run!
+    $logger.info "starting webserver"
+    @webserver.start
+  end
+end
+
+class Simple < WEBrick::HTTPServlet::AbstractServlet
+  def encode_entities str
+    str
+  end
+
+  def do_GET request, response
+    $logger.info "webserver GET " + request.path
+    case request.path
+    when '/api/advance'
+      do_api_advance request, response
+    when '/api/stop'
+      do_api_stop request, response
+    when '/api/startValve'
+      do_api_startValve request, response
+    when '/api/getStatus'
+      do_api_getStatus request, response
+    when '/favicon.ico'
+      response.status = 404
+    when '/'
+      do_index request, response
+    end
+  end
+
+  def do_api_advance request, response
+    $valves.advance
+    response.status = 200
+    response['Content-Type'] = 'text/html'
+    response.body = "#{$valves.on}"
+  end
+
+  def do_api_stop request, response
+    $valves.stop
+    response.status = 200
+    response['Content-Type'] = 'text/html'
+    response.body = "#{$valves.on}"
+  end
+
+  def do_api_start request, response
+    $valves.start(request.query_param 'valve')
+    response.status = 200
+    response['Content-Type'] = 'text/html'
+    response.body = "#{$valves.on}"
+  end
+
+  def do_api_getStatus request, response
+     response.status = 200
+     response['Content-Type'] = 'text/json'
+     response.body = {:timestamp => Time::now, :trigger => $trigger, :rainfall => $rainfall, :valveOn => $valves.on}.to_json
+  end
+
+  def do_index request, response
+    response.status = 200
+    response['Content-Type'] = 'text/html'
+    response.body = <<INDEX_HTML
+      <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+      <script>
+      function indicateValve (num) {
+        $("div.running").hide ();
+        $("div.running").filter (function (index) {return index + 1 == num;}).show ("fast");
       }
-      $log->info ("rainfall = $rainfall in");
-      putXivelyData ("forecast.rainfall", $rainfall);
-    }
-    else {
-        $log->error ('error getting weather');
-    }
-    $last_weather_check = time;
-}
-
-
-sub getCalendarURL {
-  return 'http://www.google.com/calendar/feeds/' .
-    ${config}->{google_feed} . '@group.calendar.google.com/' .
-    'private-' . ${config}->{google_private} . '/full' .
-    "?fields=entry(gd:when,title[text()='flud'])" .
-    '&singleevents=true&prettyprint=true&max-results=1&orderby=starttime&sortorder=a&' .
-    '&start-min=' . timestamp(time) .
-    '&start-max=' . timestamp(time + 2 * $CALENDAR_UPDATE_INTERVAL);
-}
-
-
-sub checkCalendar {
-    return unless $config->{google_feed} && defined $config->{google_private};
-    $log->info ('retrieving calendar');
-    $semaphore->down;
-    $trigger = 0;
-    my $url = getCalendarURL();
-    $log->trace ($url);
-    my $event = HTTP::Tiny->new->get($url)->{content};
-    $log->trace ($event);
-    if ($event =~ /startTime='(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{3}([\+\-])(\d{2}):(\d{2})'/) {
-        my ($year, $mon, $mday, $hour, $min, $sec, $zone_sign, $zone_hour, $zone_min) =
-                ($1, $2, $3, $4, $5, $6, $7, $8, $9);
-        $trigger = timegm ($sec, $min, $hour, $mday, $mon-1, $year-1900) -
-                (($zone_sign eq '-' ? -1 : 1) * ($zone_hour * $SECS_PER_HOUR + $zone_min * $SECS_PER_MIN));
-    }
-    $semaphore->up;
-    $last_calendar_check = time;
-}
-
-
-sub initValves {
-    # call set_debug(1) to do a non-destructive test on non-RPi hardware
-    my ($sysname, $nodename, $release, $version, $machine) = POSIX::uname();
-    Device::BCM2835::set_debug($machine ne 'armv6l' || $debug);
-    Device::BCM2835::init() or $log->logdie ('could not init library');
-
-    Device::BCM2835::gpio_fsel ($data_pin,
-                              &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
-    Device::BCM2835::gpio_fsel ($shift_pin,
-                              &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
-    Device::BCM2835::gpio_fsel ($store_pin,
-                              &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
-    Device::BCM2835::gpio_fsel ($noe_pin,
-                              &Device::BCM2835::BCM2835_GPIO_FSEL_OUTP);
-
-    Device::BCM2835::gpio_write ($data_pin,  0);
-    Device::BCM2835::gpio_write ($shift_pin, 0);
-    Device::BCM2835::gpio_write ($store_pin, 0);
-    Device::BCM2835::gpio_write ($noe_pin,   0);
-}
-
-
-sub commitValves {
-    Device::BCM2835::gpio_write ($shift_pin, 0);
-    Device::BCM2835::gpio_write ($store_pin, 0);
-    for (my $ii = 8; $ii > 0; --$ii) {
-        Device::BCM2835::gpio_write ($shift_pin, 0);
-        Device::BCM2835::gpio_write ($data_pin, $valveOn == $ii ? 1 : 0);
-        Device::BCM2835::gpio_write ($shift_pin, 1);
-    }
-    Device::BCM2835::gpio_write ($store_pin, 1);
-    for (my $ii = 8; $ii > 0; --$ii) {
-        putXivelyData ("valve." . $ii, $valveOn == $ii ? 1 : 0);
-    }
-}
-
-
-sub stopValves {
-    $log->info ('stopping valves');
-    $semaphore->down;
-    $valveOn = 0;
-    $trigger = 0;
-    $semaphore->up;
-    commitValves();
-}
-
-
-sub advanceValves {
-    $semaphore->down;
-
-    do {
-        ++$valveOn;
-    } while ($valveOn <= (scalar @{$config->{valve_specs}}) && !$config->{valve_specs}->[$valveOn-1]->{duration});
-
-    if ($valveOn > scalar @{$config->{valve_specs}}) {
-        $log->info ('valve schedule complete');
-        $valveOn = 0;
-        $trigger = 0;
-    }
-    else {
-        $log->info (sprintf (qq(advancing to run valve #%d - "%s" for %d minutes),
-                             $valveOn,
-                             $config->{valve_specs}->[$valveOn-1]->{name},
-                             $config->{valve_specs}->[$valveOn-1]->{duration}));
-        $trigger = time + $config->{valve_specs}->[$valveOn-1]->{duration} * $SECS_PER_MIN;
-    }
-    $semaphore->up;
-
-    commitValves();
-}
-
-
-sub startValve {
-  my ($valve) = @_;
-
-  $semaphore->down;
-  $valveOn = $valve;
-  $log->info (sprintf (qq(starting valve #%d - "%s" for %d minutes),
-                       $valveOn,
-                       $config->{valve_specs}->[$valveOn-1]->{name},
-                       $config->{valve_specs}->[$valveOn-1]->{duration}));
-  $trigger = time + $config->{valve_specs}->[$valveOn-1]->{duration} * $SECS_PER_MIN;
-  $semaphore->up;
-
-  commitValves();
-}
-
-
-sub dirtmon {
-  my $PORT = '/dev/ttyUSB0';
-
-  my $ob = Device::SerialPort->new ($PORT) || $log->logdie ("Cannot create device $PORT: $!");
-  $ob->baudrate(57600)   || $log->logdie ("failed setting baudrate");
-  $ob->parity("none")    || $log->logdie ("failed setting parity");
-  $ob->databits(8)       || $log->logdie ("failed setting databits");
-  $ob->handshake("none") || $log->logdie ("failed setting handshake");
-  $ob->write_settings    || $log->logdie ("no settings");
-  open (my $DEV, "+<", $PORT)  || $log->logdie ("Cannot open $PORT: $_");
-
-  print $DEV '1i 212g\n'; # node 1 in group 212
-
-  while ($dirtmon) {
-    while ($_ = <$DEV>) {
-      # byte -> 0  1  2  3  4  5  6   7   8  9  10  11  12
-      #         ====  ----------  - --- ---  -----  ------
-      # eg   -> OK 2  2  0  0  0  2 115 117  0   0   0   0
-      #  long ping;      // 32-bit counter
-      #  byte id :7;     // identity, should be different for each node
-      #  byte boost :1;  // whether compiled for boost chip or not
-      #  byte vcc1;      // VCC before transmit, 1.0V = 0 .. 6.0V = 250
-      #  byte vcc2;      // battery voltage (BOOST=1), or VCC after transmit (BOOST=0)
-      #  word sensor;    // sensor1
-      #  word sensor;    // sensor2
-      if (/^OK 2/) {
-        my @rec = split(' ', $_);
-        my $ping  = $rec[2] + $rec[3] * 256 + $rec[4] * 256 * 256 + $rec[5] * 256 * 256 * 256;
-        my $id    = $rec[6];
-        my $vcc1  = $rec[7] / 250.0 * 5.0 + 1.0;
-        my $vcc2  = $rec[8] / 250.0 * 5.0 + 1.0;
-        my $sensor1 = $rec[9] + $rec[10] * 256;
-        my $sensor2 = $rec[11] + $rec[12] * 256;
-        $log->info (join (' ', 'dirtmon', $ping, $id, $vcc1, $vcc2, $sensor1, $sensor2));
-        putXivelyData ("dirtmon1.vcc1", $vcc1);
-        putXivelyData ("dirtmon1.vcc2", $vcc2);
-        putXivelyData ("dirtmon1.moisture1", $sensor1);
-        putXivelyData ("dirtmon1.moisture2", $sensor2);
-        $moisture = ((1023 - $sensor1) + (1023 - $sensor2)) / 2;
-        $voltage  = ($vcc1 + $vcc2) / 2.0;
+      function startValve (num) {
+        $.ajax({
+          url: "/api/startValve",
+          data: {
+            valve: num + 1
+          },
+          success: function (data) {
+            $("#status").html ("<strong>success " + data + "</strong>");
+            indicateValve (data);
+          }
+        });
       }
-    }
-    sleep 1;
-  }
-  close $DEV;
-}
+      function stop () {
+        $.ajax({
+          url: "/api/stop",
+          success: function (data) {
+            $("#status").html ("<strong>success " + data + "</strong>");
+            indicateValve (data);
+          }
+        });
+      }
+      function advance () {
+        $.ajax({
+          url: "/api/advance",
+          success: function (data) {
+            $("#status").html ("<strong>success " + data + "</strong>");
+            indicateValve (data);
+          }
+        });
+      }
+      function refreshStatus () {
+        $.ajax({
+          url: "/api/getStatus",
+          dataType: "json",
+          success: function (data) {
+            $("#timestamp").html(data.timestamp);
+            $("#trigger").html(data.trigger);
+            $("#rainfall").html(data.rainfall);
+            indicateValve (data.valveOn);
+          },
+        });
+      }
+      $(document).ready(function () {
+        refreshStatus ();
+        setInterval (refreshStatus, 30 * 1000);
+      });
+      </script>
+      <div id="status"></div>
+      Server timestamp =    <div style="display:inline" id="timestamp">#{Time::now}</div><br>
+      Next trigger =        <div style="display:inline" id="trigger">#{$trigger}</div><br>
+      Forecasted rainfall = <div style="display:inline" id="rainfall">#{$rainfall}</div> in<br>
+      Soil moisture =       <div style="display:inline" id="moisture">#{$moisture}</div><br>
+      Sensor voltage =      <div style="display:inline" id="voltage">#{$voltage}</div>V<br>
+      <br>
+      Valves <form method='POST'>
+INDEX_HTML
+    (0..($config[:valve_specs].length-1)).each do |ii|
+      response.body += "<input type='text' name='n#{ii}' value='#{$config[:valve_specs][ii][:name]}' />" +
+                       "<input type='text' name='d#{ii}' value='#{$config[:valve_specs][ii][:duration]}' />" +
+                       "<input type='button' name='s#{ii}' value='start' onclick='startValve(#{ii})' />" +
+                       "<div class='running' style='display:inline;'>&lt;-- ON</div>" +
+                       "<br>"
+    end
+    response.body += "<input type='button' value='advance' onclick='advance()' />" +
+                     "<input type='button' value='stop' onclick='stop()' />" +
+                     "<br><br>" +
+                     "Google calendar id  <input type='text' name='calendar_id'         value='#{$config[:calendar_id]}' /><br>" +
+                     "Wunderground API key<input type='text' name='wunderground_apikey' value='#{$config[:wunderground_apikey]}' /><br>" +
+                     "Zipcode             <input type='text' name='zipcode'             value='#{$config[:zipcode]}' /><br>" +
+                     "Xively API key      <input type='text' name='xively_apikey'       value='#{$config[:xively_apikey]}' /><br>" +
+                     "Xively feed id      <input type='text' name='xively_feed'         value='#{$config[:xively_feed]}' /><br>" +
+                     "Rain threshold      <input type='text' name='rain_threshold'      value='#{$config[:rain_threshold]}' /><br>" +
+                     "Moisture threshold  <input type='text' name='moisture_threshold'  value='#{$config[:moisture_threshold]}' /><br>" +
+                     "<input type='hidden' name='h' />" +
+                     "<input type='submit' value='Submit' /></form>"
+  end
+
+  def do_POST request, response
+    $logger.info "webserver POST"
+    request.query.each do |key, value|
+      if index = /^n(\d+)/.match(key)
+        $config[:valve_specs][index.captures[0].to_i][:name] = value
+      elsif index = /^d(\d+)/.match(key)
+        $config[:valve_specs][index.captures[0].to_i][:duration] = value.to_i
+      else
+        $config[key.to_sym] = value
+      end
+    end
+#    FIXME:
+        #     open (my $CONF, ">", $conf_file);
+        #     print $CONF Data::Dumper->Dump([$config], ['$config']);
+        #     close $CONF;
+    do_index request, response
+  end
+end
 
 
-sub run_webserver {
-    my $sock = IO::Socket::INET->new (PeerAddr => 'example.com',
-                                      PeerPort => 80,
-                                      Proto    => 'tcp');
-    my $localip = $sock->sockhost;
-    my $d = HTTP::Daemon->new (ReuseAddr => 1,
-                               LocalAddr => $localip,
-                               LocalPort => 8888,
-                               Listen    => 20) || die;
+# -------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------- [Dirtmon]
+# -------------------------------------------------------------------------------------------
 
-    $log->info ('web server started at ' . $d->sockhost() . ':' .$d->sockport());
+require 'serialport'
 
-    while (my $c = $d->accept) {
-        threads->create (\&process_one_req, $c)->detach();
-    }
-}
+class Dirtmon
+  attr_reader :options, :quit
 
+  def initialize options
+    @options = options
+    @port = '/dev/ttyUSB0'
+    @baud_rate = 57600
+    @data_bits = 8
+    @stop_bits = 1
+    @parity    = SerialPort::NONE
+    #ob->handshake("none") || $log->logdie ("failed setting handshake")
+  end
 
-sub send_index {
-    my ($client) = @_;
-    my $response = HTTP::Response->new(200);
-    $response->header ('Content-Type' => 'text/html');
+  def self.run! options
+    Dirtmon.new(options).run!
+  end
 
-    my $body = join (' ',
-        '<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>',
-        '<script>',
-        'function indicateValve (num) {
-          $("div.running").hide ();
-          $("div.running").filter (function (index) {return index + 1 == num;}).show ("fast");
-         }',
-        'function startValve (num) {
-          $.ajax({
-             url: "/api/startValve",
-             data: {
-               valve: num + 1
-             },
-             success: function (data) {
-                $("#status").html ("<strong>success " + data + "</strong>");
-                indicateValve (data);
-             }
-           });
-         }',
-        'function stop () {
-          $.ajax({
-             url: "/api/stop",
-             success: function (data) {
-                $("#status").html ("<strong>success " + data + "</strong>");
-                indicateValve (data);
-             }
-           });
-         }',
-        'function advance () {
-          $.ajax({
-             url: "/api/advance",
-             success: function (data) {
-                $("#status").html ("<strong>success " + data + "</strong>");
-                indicateValve (data);
-             }
-           });
-         }',
-        'function refreshStatus () {
-          $.ajax({
-             url: "/api/getStatus",
-             dataType: "json",
-             success: function (data) {
-                $("#timestamp").html(data.timestamp);
-                $("#trigger").html(data.trigger);
-                $("#rainfall").html(data.rainfall);
-                indicateValve (data.valveOn);
-             }
-           });
-         }',
-        '$(document).ready(function () {
-           refreshStatus ();
-           setInterval (refreshStatus, 30 * 1000);
-         });',
-        '</script>',
-        '<div id="status"></div>',
-        'Server timestamp =    <div style="display:inline" id="timestamp">', time,      '</div><br>',
-        'Next trigger =        <div style="display:inline" id="trigger">',   $trigger,  '</div><br>',
-        'Forecasted rainfall = <div style="display:inline" id="rainfall">',  $rainfall, '</div> in<br>',
-        'Soil moisture =       <div style="display:inline" id="moisture">',  $moisture, '</div><br>',
-        'Sensor voltage =      <div style="display:inline" id="voltage">',   $voltage,  '</div>V<br>',
-        '<br>',
-        "Valves <form method='POST'>"
-    );
-    for (my $ii = 0; $ii < scalar @{$config->{valve_specs}}; ++$ii) {
-        $body .= "<input type='text' name='n$ii' value='" . encode_entities($config->{valve_specs}->[$ii]->{name}) . "' />";
-        $body .= "<input type='text' name='d$ii' value='$config->{valve_specs}->[$ii]->{duration}' />";
-        $body .= "<input type='button' name='s$ii' value='start' onclick='startValve($ii)' />";
-        $body .= "<div class='running' style='display:inline;'>\&lt;-- ON</div>";
-        $body .= "<br>";
-    }
-    $body .= "<input type='button' value='advance' onclick='advance()' />";
-    $body .= "<input type='button' value='stop' onclick='stop()' />";
-    $body .= "<br><br>";
-    $body .= "Google calendar XML <input type='text' name='gcal' value='" .
-      encode_entities("http://www.google.com/calendar/feeds/$config->{google_feed}\@group.calendar.google.com/private-$config->{google_private}/full") . "' /><br>";
-    $body .= "<a href='" . getCalendarURL() . "'>View Calendar</a><br>";
-    $body .= "Wunderground API key<input type='text' name='wunderground_apikey' value='$config->{wunderground_apikey}' /><br>";
-    $body .= "Zipcode <input type='text' name='zipcode' value='$config->{zipcode}' /><br>";
-    $body .= "<a href='" . getWeatherURL() . "'>View Weather</a><br>";
-    $body .= "Xively API key<input type='text' name='xively_apikey' value='$config->{xively_apikey}' /><br>";
-    $body .= "Xively feed id<input type='text' name='xively_feed' value='$config->{xively_feed}' /><br>";
-    $body .= "<a href='" . getXivelyURL() . "'>View Xively</a><br>";
-    $body .= "Rain threshold<input type='text' name='rain_threshold' value='$config->{rain_threshold}' /><br>";
-    $body .= "Moisture threshold<input type='text' name='moisture_threshold' value='$config->{moisture_threshold}' /><br>";
-    $body .= "<input type='hidden' name='h' />";
-    $body .= "<input type='submit' value='Submit' /></form>";
-
-    $response->content($body);
-    $client->send_response($response);
-}
+  def run!
+    $logger.info 'dirtmon starting'
+    SerialPort.open(@port, @baud_rate, @data_bits, @stop_bits, @parity) do |sp|
+      sp.puts '1i 212g' # node 1 in group 212
+      while !quit
+        $logger.debug 'dirtmon listening'
+        while message = sp.gets.chomp
+          # byte -> 0  1  2  3  4  5  6   7   8  9  10  11  12
+          #         ====  ----------  - --- ---  -----  ------
+          # eg   -> OK 2  2  0  0  0  2 115 117  0   0   0   0
+          #  long ping;      // 32-bit counter
+          #  byte id :7;     // identity, should be different for each node
+          #  byte boost :1;  // whether compiled for boost chip or not
+          #  byte vcc1;      // VCC before transmit, 1.0V = 0 .. 6.0V = 250
+          #  byte vcc2;      // battery voltage (BOOST=1), or VCC after transmit (BOOST=0)
+          #  word sensor;    // sensor1
+          #  word sensor;    // sensor2
+          if message =~ /^OK 2/
+            rec = message.split(' ').map{ |v| v.to_i }
+            ping  = rec[2] + rec[3] * 256 + rec[4] * 256 * 256 + rec[5] * 256 * 256 * 256
+            id    = rec[6]
+            vcc1  = rec[7] / 250.0 * 5.0 + 1.0
+            vcc2  = rec[8] / 250.0 * 5.0 + 1.0
+            sensor1 = rec[9] + rec[10] * 256
+            sensor2 = rec[11] + rec[12] * 256
+            $logger.info ['dirtmon', ping, id, vcc1, vcc2, sensor1, sensor2].join(' ')
+            $xively.put "dirtmon1.vcc1", vcc1
+            $xively.put "dirtmon1.vcc2", vcc2
+            $xively.put "dirtmon1.moisture1", sensor1
+            $xively.put "dirtmon1.moisture2", sensor2
+            $moisture = ((1023 - sensor1) + (1023 - sensor2)) / 2
+            $voltage  = (vcc1 + vcc2) / 2.0
+          end
+        end
+        sleep 1
+      end
+    end
+    $logger.info 'dirtmon exiting'
+  end
+end
 
 
-sub process_one_req {
-    STDOUT->autoflush(1);
-    my $client = shift;
-    while (my $r = $client->get_request) {
-        $log->trace (Data::Dumper->Dump([$r], ['$r']));
-        if ($r->method eq "GET") {
-            if ($r->uri->path eq "/api/advance") {
-                advanceValves ();
-                my $response = HTTP::Response->new(200);
-                $response->header ('Content-Type' => 'text/html');
-                $response->content ($valveOn);
-                $client->send_response ($response);
-            } elsif ($r->uri->path eq "/api/stop") {
-                stopValves ();
-                my $response = HTTP::Response->new(200);
-                $response->header ('Content-Type' => 'text/html');
-                $response->content ($valveOn);
-                $client->send_response ($response);
-            } elsif ($r->uri->path =~ "/api/startValve") {
-                startValve ($r->uri->query_param('valve'));
-                my $response = HTTP::Response->new(200);
-                $response->header ('Content-Type' => 'text/html');
-                $response->content ($valveOn);
-                $client->send_response ($response);
-            } elsif ($r->uri->path =~ "/api/getStatus") {
-                my $response = HTTP::Response->new(200);
-                $response->header ('Content-Type' => 'text/json');
-                my $now = time;
-                my $content = qq({"timestamp" : $now, "trigger" : $trigger, "rainfall" : $rainfall, "valveOn" : $valveOn});
-                $response->content ($content);
-                $client->send_response ($response);
-              } else {
-                send_index ($client);
-            }
-        }
-        elsif ($r->method eq "POST") {
-            my $content = $r->content;
-            while ($content =~ s/n(\d+)=(.*?)&//) {
-                my ($index, $name) = ($1, $2);
-                $name =~ s/\+/ /g;
-                $name =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-                $config->{valve_specs}->[$index]->{name} = $name;
-            }
-            while ($content =~ s/d(\d+)=(\d+)&//) {
-                $config->{valve_specs}->[$1]->{duration} = int ($2);
-            }
-            while ($content =~ s{gcal=(.*?)&}{}) {
-                my $value = $1;
-                $value =~ s/\+/ /g;
-                $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-                $value =~ m{https?://www\.google\.com/calendar/feeds/(.*)(?:(?:\@)|(?:\%40))group\.calendar\.google\.com/private-(.*?)/.*};
-                ($config->{google_feed}, $config->{google_private}) = ($1, $2);
-            }
-            foreach my $name (qw(wunderground_apikey zipcode xively_apikey xively_feed rain_threshold moisture_threshold)) {
-                while ($content =~ s/${name}=([-\d.A-Za-z]+)&//) {
-                    my $value = $1;
-                    $value =~ s/\+/ /g;
-                    $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-                    $config->{$name} = $value;
-                }
-            }
-            open (my $CONF, ">", $conf_file);
-            print $CONF Data::Dumper->Dump([$config], ['$config']);
-            close $CONF;
-            send_index ($client);
-        }
-        else {
-            $client->send_error (RC_FORBIDDEN);
-        }
-    }
-    $client->close;
-    undef ($client);
-}
+# -------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------- [Config]
+# -------------------------------------------------------------------------------------------
+
+CONF_FILE = 'flud.yml'
+begin
+  $config = YAML.load_file CONF_FILE
+rescue
+  $logger.info 'creating configuration file'
+  $config = {:calendar_id         => nil,
+             :wunderground_apikey => nil,
+             :xively_feed         => nil,
+             :xively_apikey       => nil,
+             :zipcode             => nil,
+             :rain_threshold      => nil,
+             :moisture_threshold  => nil,
+             :valve_specs         => [{:name=>'1', :duration=>1}, {:name=>'2', :duration=>2}]}
+  File.open(CONF_FILE, 'w') do |file|
+    file.write(Psych.dump $config)
+  end
+end
 
 
-initValves();
-stopValves();
+# -------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------- [Server]
+# -------------------------------------------------------------------------------------------
 
-threads->create (\&run_webserver);
-threads->create (\&dirtmon);
+require 'fileutils'
+require 'logger'
 
-while ($keep_going) {
-    if (0) {}
-    elsif (!$valveOn && (time - $last_weather_check >= $WEATHER_UPDATE_INTERVAL)) {
-        checkWeather();
-    }
-    elsif (!$valveOn && (time - $last_calendar_check >= $CALENDAR_UPDATE_INTERVAL)) {
-        checkCalendar();
-    }
-    elsif ($trigger && $trigger < time) {
-        if ($valveOn || ($rainfall <= $config->{rain_threshold} && $moisture <= $config->{moisture_threshold})) {
-            advanceValves();
-        }
-        else {
-            $log->info ("rain delay");
-            $trigger += $WEATHER_UPDATE_INTERVAL;
-        }
-    }
-    elsif (time - $last_status_print >= $STATUS_UPDATE_INTERVAL) {
-        printStatus();
-    }
-    sleep (1);
-}
+# server class from https://github.com/jakesgordon/ruby-sample-daemon/blob/master/lib/server.rb
+class Server
+  VERSION = "1.0.0"
 
-stopValves();
+  attr_reader :options, :quit
 
-# Mark a clean exit in the log
-$log->info ('exiting');
+  def initialize options
+    @options = options
+    options[:logfile] = File.expand_path(logfile) if logfile?   # daemonization might change CWD so expand any relative paths in advance
+    options[:pidfile] = File.expand_path(pidfile) if pidfile?   # (ditto)
+  end
 
-__END__
+  def daemonize?
+    !options[:foreground]
+  end
+
+  def logfile
+    options[:logfile]
+  end
+
+  def pidfile
+    options[:pidfile]
+  end
+
+  def logfile?
+    !logfile.nil?
+  end
+
+  def pidfile?
+    !pidfile.nil?
+  end
+
+  def info msg
+    puts "[#{Process.pid}] [#{Time.now}] #{msg}"
+  end
+
+  #--------------------------------------------------------------------------
+
+  def self.run! options
+    Server.new(options).run!
+  end
+
+  def run!
+    if daemonize? && Process.euid != 0
+      puts "only root can daemonize, run with --foreground instead"
+      exit
+    end
+
+    check_pid
+    daemonize if daemonize?
+    write_pid
+    trap_signals
+
+    if daemonize?
+      suppress_output
+      $logger = Logger.new logfile, 'weekly'
+    else
+      $logger = Logger.new STDOUT
+    end
+
+    $logger.level = $DEBUG ? Logger::DEBUG : Logger::INFO
+
+    $logger.info 'starting'
+
+    $xively    = XivelyClient::new
+    $valves    = Valves::new
+    $weather   = WeatherClient::new
+    $calendar  = CalendarClient::new
+    $semaphore = Mutex::new
+    $status    = Status::new
+    $trigger   = 0
+    $rainfall  = 0
+    $moisture  = 0
+    $voltage   = 0
+
+    Thread.new{Dirtmon.run! nil}
+    Thread.new{Webserver.run! nil}
+
+    while !quit do
+      if $valves.off? && $weather.is_stale?
+        $rainfall = $weather.rainfall
+      elsif $valves.off? && $calendar.is_stale?
+        $trigger = $calendar.trigger
+      elsif $trigger != 0 && $trigger < Time::now
+        $logger.debug 'triggering'
+        if !$valves.off? || ($rainfall <= $config[:rain_threshold] && $moisture <= $config[:moisture_threshold])
+          $valves.advance
+        else
+          if $rainfall > $config[:rain_threshold]
+            $logger.info "rainfall delay"
+          elsif $moisture > $config[:moisture_threshold]
+            $logger.info "moisture delay"
+          end
+          $trigger += WeatherClient::update_interval
+        end
+      elsif $status.is_stale?
+        $status.print
+      end
+      sleep 1
+    end
+
+    $valves.stop
+
+    # Mark a clean exit in the log
+    $logger.info 'exiting'
+  end
+
+  def daemonize
+    exit if fork
+    Process.setsid
+    exit if fork
+    Dir.chdir "/"
+  end
+
+  def redirect_output
+    FileUtils.mkdir_p(File.dirname(logfile), :mode => 0755)
+    FileUtils.touch logfile
+    File.chmod 0644, logfile
+    $stderr.reopen logfile, 'a'
+    $stdout.reopen $stderr
+    $stdout.sync = $stderr.sync = true
+  end
+
+  def suppress_output
+    $stderr.reopen '/dev/null', 'a'
+    $stdout.reopen $stderr
+  end
+
+  def write_pid
+    if pidfile? && Process.euid == 0
+      begin
+        File.open(pidfile, ::File::CREAT | ::File::EXCL | ::File::WRONLY){|f| f.write "#{Process.pid}" }
+        at_exit { File.delete(pidfile) if File.exists? pidfile }
+      rescue Errno::EEXIST
+        check_pid
+        retry
+      end
+    end
+  end
+
+  def check_pid
+    if pidfile?
+      case pid_status pidfile
+      when :running, :not_owned
+        puts "A server is already running. Check #{pidfile}"
+        exit 1
+      when :dead
+        File.delete pidfile
+      end
+    end
+  end
+
+  def pid_status pidfile
+    return :exited unless File.exists? pidfile
+    pid = ::File.read(pidfile).to_i
+    return :dead if pid == 0
+    Process.kill 0, pid
+    :running
+  rescue Errno::ESRCH
+    :dead
+  rescue Errno::EPERM
+    :not_owned
+  end
+
+  def trap_signals
+    trap(:INT)  do $logger.info 'caught SIGINT, exiting gracefully'  ; @quit = true; end
+    trap(:QUIT) do $logger.info 'caught SIGQUIT, exiting gracefully' ; @quit = true; end
+    trap(:TERM) do $logger.info 'caught SIGTERM, exiting gracefully' ; @quit = true; end
+  end
+end
+
+
+# -------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------- [Options]
+# -------------------------------------------------------------------------------------------
+
+require 'optparse'
+
+options = { :action => :run, :foreground => false, :logfile => '/var/log/flud.log', :pidfile => '/var/run/flud.pid' }
+
+foreground_help = "don't daemonize (default: false)"
+pidfile_help    = "the pid filename"
+logfile_help    = "the log filename"
+include_help    = "an additional $LOAD_PATH (may be used more than once)"
+debug_help      = "set $DEBUG to true"
+warn_help       = "enable warnings"
+
+op = OptionParser.new
+op.banner =  "flud control"
+op.separator ""
+op.separator "Usage: flud [options]"
+op.separator ""
+
+op.separator ""
+op.separator "Process options:"
+op.on("-f", "--foreground",  foreground_help) {         options[:foreground] = true  }
+op.on("-p", "--pid PIDFILE", pidfile_help)    { |value| options[:pidfile]   = value }
+op.on("-l", "--log LOGFILE", logfile_help)    { |value| options[:logfile]   = value }
+
+op.separator ""
+op.separator "Ruby options:"
+op.on("-I", "--include PATH", include_help) { |value| $LOAD_PATH.unshift(*value.split(":").map{|v| File.expand_path(v)}) }
+op.on(      "--debug",        debug_help)   { $DEBUG = true }
+op.on(      "--warn",         warn_help)    { $-w = true    }
+
+op.separator ""
+op.separator "Common options:"
+op.on("-h", "--help")    { options[:action] = :help    }
+op.on("-v", "--version") { options[:action] = :version }
+
+op.separator ""
+op.parse!(ARGV)
+
+# -------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------- [Run]
+# -------------------------------------------------------------------------------------------
+
+case options[:action]
+when :help    then puts op.to_s
+when :version then puts Server::VERSION
+else
+  Server.run! options
+end
