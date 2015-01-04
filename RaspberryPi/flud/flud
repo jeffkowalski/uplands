@@ -444,7 +444,13 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
   def do_api_getStatus request, response
      response.status = 200
      response['Content-Type'] = 'text/json'
-     response.body = {:timestamp => Time.now, :trigger => $trigger, :rainfall => $rainfall, :valveOn => $valves.on}.to_json
+     response.body = {:timestamp => Time.now,
+                      :trigger   => $trigger,
+                      :rainfall  => $rainfall,
+                      :moisture  => $moisture,
+                      :voltage   => $voltage,
+                      :dirtmon_timestamp => $dirtmon_timestamp,
+                      :valveOn   => $valves.on}.to_json
   end
 
   def do_index request, response
@@ -495,6 +501,9 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
             $("#timestamp").html(data.timestamp);
             $("#trigger").html(data.trigger);
             $("#rainfall").html(data.rainfall);
+            $("#moisture").html(data.moisture);
+            $("#voltage").html(data.voltage);
+            $("#dirtmon_timestamp").html(data.dirtmon_timestamp);
             indicateValve (data.valveOn);
           },
         });
@@ -510,6 +519,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
       Forecasted rainfall = <div style="display:inline" id="rainfall">#{$rainfall}</div> in<br>
       Soil moisture =       <div style="display:inline" id="moisture">#{$moisture}</div><br>
       Sensor voltage =      <div style="display:inline" id="voltage">#{$voltage}</div>V<br>
+      Dirtmon timestamp =   <div style="display:inline" id="dirtmon_timestamp">#{$dirtmon_timestamp}</div><br>
       <br>
       Valves <form method='POST'>
 INDEX_HTML
@@ -606,6 +616,7 @@ class Dirtmon
             $xively.put "dirtmon1.moisture2", sensor2
             $moisture = ((1023 - sensor1) + (1023 - sensor2)) / 2
             $voltage  = (vcc1 + vcc2) / 2.0
+            $dirtmon_timestamp = Time.now
           end
         end
         sleep 1
@@ -747,6 +758,7 @@ class Server
     $rainfall  = 0
     $moisture  = 0
     $voltage   = 0
+    $dirtmon_timestamp = Time.genesis
 
     Thread.new{Dirtmon.run! nil}
     Thread.new{Webserver.run! nil}
