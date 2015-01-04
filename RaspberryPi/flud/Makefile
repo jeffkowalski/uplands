@@ -49,7 +49,8 @@ remote-uninstall:
 # above is made.
 #
 
-RUBYGEMS = fileutils google-api-client logger serialport webrick wiringpi wunderground xively-rb yaml
+#RUBYGEMS = fileutils google-api-client logger serialport webrick wiringpi wunderground xively-rb yaml
+RUBYGEMS = fileutils logger serialport webrick wiringpi wunderground xively-rb yaml
 
 /usr/lib/ruby/1.9.1/mkmf.rb:
 	apt-get --assume-yes install ruby1.9.1-dev

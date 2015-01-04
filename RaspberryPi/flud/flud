@@ -31,10 +31,14 @@ end
 require 'wiringpi'
 
 class Valves
-  SHIFT_PIN =  7 #&Device::BCM2835::RPI_GPIO_P1_07; # Clock D6 -> SH_CP 11 (shift clock)
-  STORE_PIN = 15 #&Device::BCM2835::RPI_GPIO_P1_15; # Latch D7 -> ST_CP 12 (storage clock)
-  DATA_PIN  = 13 #&Device::BCM2835::RPI_GPIO_P1_13; # Data  D5 -> DS    14 (data in)
-  NOE_PIN   = 11 #&Device::BCM2835::RPI_GPIO_P1_11; # ~OE   A1 -> ~OE   13 (not output enable)
+  # For connections between RPi and OSpi, see
+  # http://rayshobby.net/wordpress/wp-content/uploads/2013/02/ospi_diagram_connection.jpg
+  # and for translations between header pins and wiringpi pins numbers, see
+  # http://wiringpi.com/pins/
+  STORE_PIN =  3 # 15 #&Device::BCM2835::RPI_GPIO_P1_15; # Latch D7 -> ST_CP 12 (storage clock)
+  DATA_PIN  =  2 # 13 #&Device::BCM2835::RPI_GPIO_P1_13; # Data  D5 -> DS    14 (data in)
+  NOE_PIN   =  0 # 11 #&Device::BCM2835::RPI_GPIO_P1_11; # ~OE   A1 -> ~OE   13 (not output enable)
+  SHIFT_PIN =  7 #  7 #&Device::BCM2835::RPI_GPIO_P1_07; # Clock D6 -> SH_CP 11 (shift clock)
   #                                                 # connect rPi 2 5v  to VCC 16
   #                                                 # connect rPi 6 GND to GND  8
   #                                                 # connect rPi 6 GND to ~OE 13 (output enable, active low) to ground
@@ -44,7 +48,8 @@ class Valves
     @gpio = nil
     @on = 0
 
-    return if $DEBUG || RUBY_PLATFORM != 'arm-linux-eabihf'
+    return if # $DEBUG ||
+              RUBY_PLATFORM != 'arm-linux-eabihf'
 
     @gpio = WiringPi::GPIO.new
     [DATA_PIN, SHIFT_PIN, STORE_PIN, NOE_PIN].each { |pin| @gpio.mode pin, OUTPUT }
@@ -63,16 +68,18 @@ class Valves
 
   def commit
     if @gpio
+      $logger.info "committing valves"
+
       @gpio.write SHIFT_PIN, 0
       @gpio.write STORE_PIN, 0
-      [8..1].each do |ii|
+      8.downto(1) do |ii|
         @gpio.write SHIFT_PIN, 0
         @gpio.write DATA_PIN, @on == ii ? 1 : 0
         @gpio.write SHIFT_PIN, 1
       end
       @gpio.write STORE_PIN, 1
 
-      [8..1].each do |ii|
+      8.downto(1) do |ii|
         $xively.put "valve.#{ii}", @on == ii ? 1 : 0
       end
     end
@@ -88,23 +95,23 @@ class Valves
       if @on > $config[:valve_specs].length
         $logger.info 'valve schedule complete'
         @on = 0
-        $trigger = 0
+        $trigger = Time::new(2038)
       else
         $logger.info "advancing to run valve #{@on} - '#{$config[:valve_specs][@on-1][:name]}' for #{$config[:valve_specs][@on-1][:duration]} minutes"
         $trigger = Time::now + $config[:valve_specs][@on-1][:duration] * 60 # duration in seconds
       end
     }
 
-    self.commit
+    commit
   end
 
   def stop
     $logger.info 'stopping valves'
     $semaphore.synchronize {
-      @on = 0;
-      $trigger = 0;
+      @on = 0
+      $trigger = Time::new(2038)
     }
-    self.commit
+    commit
   end
 end
 
@@ -118,7 +125,7 @@ require 'yaml'
 
 module OAuth
   class Google
-    @@config_file=ENV['HOME'] + '/.google-api.yaml'
+    @@config_file=(ENV['HOME'] || "") + '/.google-api.yaml'
     class << self
       def load
         if File.exist? @@config_file
@@ -272,7 +279,7 @@ class CalendarClient < Updateable
   end
 
   def trigger
-    trigger = 0
+    trigger = Time::new(2038)
     $logger.info "retrieving google calendar"
     @query = {:calendarId   => $config[:calendar_id],
               :timeMin      => (Time.now -     @update_interval).iso8601,
@@ -340,7 +347,7 @@ class Status < Updateable
   end
 
   def print
-    current = Time::now.to_i
+    current = Time::now
     if !$valves.off?
       $logger.debug "v#{$valves.on} #{Time.at($trigger - current).utc.strftime '%H:%M:%S'}"
     elsif $trigger > current
@@ -412,8 +419,8 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
     response.body = "#{$valves.on}"
   end
 
-  def do_api_start request, response
-    $valves.start(request.query_param 'valve')
+  def do_api_startValve request, response
+    $valves.start(request.query_param 'valve') # FIXME: undefined method query_param
     response.status = 200
     response['Content-Type'] = 'text/html'
     response.body = "#{$valves.on}"
@@ -601,10 +608,15 @@ end
 # ---------------------------------------------------------------------------------- [Config]
 # -------------------------------------------------------------------------------------------
 
-CONF_FILE = 'flud.yml'
-begin
-  $config = YAML.load_file CONF_FILE
-rescue
+["flud.yml", "/etc/flud.conf"].each { |file|
+  if File.file? file
+    $conf_file = file
+    $config = YAML.load_file $conf_file
+    break
+  end
+}
+unless $conf_file
+  $conf_file = "flud.yml"
   $logger.info 'creating configuration file'
   $config = {:calendar_id         => nil,
              :wunderground_apikey => nil,
@@ -691,13 +703,13 @@ class Server
 
     $logger.info 'starting'
 
+    $semaphore = Mutex::new
     $xively    = XivelyClient::new
     $valves    = Valves::new
     $weather   = WeatherClient::new
     $calendar  = CalendarClient::new
-    $semaphore = Mutex::new
     $status    = Status::new
-    $trigger   = 0
+    $trigger   = Time::new(2038)
     $rainfall  = 0
     $moisture  = 0
     $voltage   = 0
@@ -710,7 +722,7 @@ class Server
         $rainfall = $weather.rainfall
       elsif $valves.off? && $calendar.is_stale?
         $trigger = $calendar.trigger
-      elsif $trigger != 0 && $trigger < Time::now
+      elsif $trigger < Time::now
         $logger.debug 'triggering'
         if !$valves.off? || ($rainfall <= $config[:rain_threshold] && $moisture <= $config[:moisture_threshold])
           $valves.advance
