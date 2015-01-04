@@ -1,5 +1,20 @@
 #!/usr/bin/ruby
-# -*- ruby-mode -*-
+
+
+# -------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------ [Time]
+# -------------------------------------------------------------------------------------------
+
+class Time
+  def self.genesis
+    self.new(0)
+  end
+
+  def self.apocalypse
+    self.new(2038)
+  end
+end
+
 
 # -------------------------------------------------------------------------------------------
 # ---------------------------------------------------------------------------- [XivelyClient]
@@ -95,10 +110,10 @@ class Valves
       if @on > $config[:valve_specs].length
         $logger.info 'valve schedule complete'
         @on = 0
-        $trigger = Time::new(2038)
+        $trigger = Time.apocalypse
       else
         $logger.info "advancing to run valve #{@on} - '#{$config[:valve_specs][@on-1][:name]}' for #{$config[:valve_specs][@on-1][:duration]} minutes"
-        $trigger = Time::now + $config[:valve_specs][@on-1][:duration] * 60 # duration in seconds
+        $trigger = Time.now + $config[:valve_specs][@on-1][:duration] * 60 # duration in seconds
       end
     }
 
@@ -109,7 +124,7 @@ class Valves
     $logger.info 'stopping valves'
     $semaphore.synchronize {
       @on = 0
-      $trigger = Time::new(2038)
+      $trigger = Time.apocalypse
     }
     commit
   end
@@ -245,7 +260,7 @@ class Updateable
   def initialize
     $logger.debug "initializing #{self.class}"
     @update_interval = 0
-    @last_check = Time::new 2000
+    @last_check = Time.genesis
   end
 
   def self.update_interval
@@ -257,12 +272,12 @@ class Updateable
   end
 
   def freshen
-    @last_check = Time::now
+    @last_check = Time.now
   end
 
   def is_stale?
     $logger.debug "checking whether #{self.class} (#{@last_check}, #{@update_interval}) is stale"
-    Time::now - @last_check >= @update_interval
+    Time.now - @last_check >= @update_interval
   end
 end
 
@@ -279,7 +294,7 @@ class CalendarClient < Updateable
   end
 
   def trigger
-    trigger = Time::new(2038)
+    trigger = Time.apocalypse
     $logger.info "retrieving google calendar"
     @query = {:calendarId   => $config[:calendar_id],
               :timeMin      => (Time.now -     @update_interval).iso8601,
@@ -347,7 +362,7 @@ class Status < Updateable
   end
 
   def print
-    current = Time::now
+    current = Time.now
     if !$valves.off?
       $logger.debug "v#{$valves.on} #{Time.at($trigger - current).utc.strftime '%H:%M:%S'}"
     elsif $trigger > current
@@ -420,7 +435,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
   end
 
   def do_api_startValve request, response
-    $valves.start(request.query_param 'valve') # FIXME: undefined method query_param
+    $valves.start request.query['valve']
     response.status = 200
     response['Content-Type'] = 'text/html'
     response.body = "#{$valves.on}"
@@ -429,7 +444,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
   def do_api_getStatus request, response
      response.status = 200
      response['Content-Type'] = 'text/json'
-     response.body = {:timestamp => Time::now, :trigger => $trigger, :rainfall => $rainfall, :valveOn => $valves.on}.to_json
+     response.body = {:timestamp => Time.now, :trigger => $trigger, :rainfall => $rainfall, :valveOn => $valves.on}.to_json
   end
 
   def do_index request, response
@@ -490,7 +505,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
       });
       </script>
       <div id="status"></div>
-      Server timestamp =    <div style="display:inline" id="timestamp">#{Time::now}</div><br>
+      Server timestamp =    <div style="display:inline" id="timestamp">#{Time.now}</div><br>
       Next trigger =        <div style="display:inline" id="trigger">#{$trigger}</div><br>
       Forecasted rainfall = <div style="display:inline" id="rainfall">#{$rainfall}</div> in<br>
       Soil moisture =       <div style="display:inline" id="moisture">#{$moisture}</div><br>
@@ -530,10 +545,7 @@ INDEX_HTML
         $config[key.to_sym] = value
       end
     end
-#    FIXME:
-        #     open (my $CONF, ">", $conf_file);
-        #     print $CONF Data::Dumper->Dump([$config], ['$config']);
-        #     close $CONF;
+    $config.write
     do_index request, response
   end
 end
@@ -608,28 +620,50 @@ end
 # ---------------------------------------------------------------------------------- [Config]
 # -------------------------------------------------------------------------------------------
 
-["flud.yml", "/etc/flud.conf"].each { |file|
-  if File.file? file
-    $conf_file = file
-    $config = YAML.load_file $conf_file
-    break
+
+class Configuration
+  attr_accessor :params
+
+  def initialize locations
+    @params = {:calendar_id         => nil,
+               :wunderground_apikey => nil,
+               :xively_feed         => nil,
+               :xively_apikey       => nil,
+               :zipcode             => nil,
+               :rain_threshold      => nil,
+               :moisture_threshold  => nil,
+               :valve_specs         => (1..8).map{|v| {:name => "valve.#{v}", :duration => 1}}}
+
+    locations.each { |file|
+      if File.file? file
+        @conf_file = file
+        @params = YAML.load_file @conf_file
+        break
+      end
+    }
+    unless @conf_file
+      @conf_file = locations[0]
+      write
+    end
   end
-}
-unless $conf_file
-  $conf_file = "flud.yml"
-  $logger.info 'creating configuration file'
-  $config = {:calendar_id         => nil,
-             :wunderground_apikey => nil,
-             :xively_feed         => nil,
-             :xively_apikey       => nil,
-             :zipcode             => nil,
-             :rain_threshold      => nil,
-             :moisture_threshold  => nil,
-             :valve_specs         => [{:name=>'1', :duration=>1}, {:name=>'2', :duration=>2}]}
-  File.open(CONF_FILE, 'w') do |file|
-    file.write(Psych.dump $config)
+
+  def [](param)
+    return self.params[param]
+  end
+
+  def get_params
+    return self.params.keys
+  end
+
+  def write
+    $logger.info 'writing configuration file'
+    File.open(@conf_file, 'w') do |file|
+      file.write(Psych.dump @params)
+    end
   end
 end
+
+$config = Configuration::new(["flud.yml", "/etc/flud.yml"])
 
 
 # -------------------------------------------------------------------------------------------
@@ -709,7 +743,7 @@ class Server
     $weather   = WeatherClient::new
     $calendar  = CalendarClient::new
     $status    = Status::new
-    $trigger   = Time::new(2038)
+    $trigger   = Time.apocalypse
     $rainfall  = 0
     $moisture  = 0
     $voltage   = 0
@@ -722,7 +756,7 @@ class Server
         $rainfall = $weather.rainfall
       elsif $valves.off? && $calendar.is_stale?
         $trigger = $calendar.trigger
-      elsif $trigger < Time::now
+      elsif $trigger < Time.now
         $logger.debug 'triggering'
         if !$valves.off? || ($rainfall <= $config[:rain_threshold] && $moisture <= $config[:moisture_threshold])
           $valves.advance
@@ -851,6 +885,7 @@ op.on("-v", "--version") { options[:action] = :version }
 
 op.separator ""
 op.parse!(ARGV)
+
 
 # -------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------------- [Run]
