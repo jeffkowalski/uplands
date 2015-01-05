@@ -751,16 +751,10 @@ class Server
     trap_signals
 
     if daemonize?
-      $logger = Logger.new logfile
-      $stderr.reopen $logger.instance_variable_get(:@logdev).dev
-      $stdout.reopen $stderr
-      $stdout.sync = $stderr.sync = true
-    else
-      $logger = Logger.new STDOUT
+      redirect_output
     end
-
+    $logger = Logger.new STDOUT
     $logger.level = $DEBUG ? Logger::DEBUG : Logger::INFO
-
     $logger.info 'starting'
 
     $semaphore = Mutex::new
