@@ -28,6 +28,7 @@ class XivelyClient
     @url = "/v2/feeds/#{$config[:xively_feed]}"
   end
   def put(stream, value)
+    $logger.debug "putting data {#{stream}=>#{value}} to xively"
     json = { :version => "1.0.0", :datastreams => [ {:id => stream, :current_value => value} ] }.to_json
     begin
       response = @client.put @url, :body => json
@@ -140,7 +141,7 @@ require 'yaml'
 
 module OAuth
   class Google
-    @@config_file=(ENV['HOME'] || "") + '/.google-api.yaml'
+    @@config_file = (ENV['HOME'] || '/etc') + '/.google-api.yaml'
     class << self
       def load
         if File.exist? @@config_file
@@ -677,6 +678,18 @@ end
 $config = Configuration::new(["flud.yml", "/etc/flud.yml"])
 
 
+class IOToLog < IO
+  def initialize(logger)
+    @logger = logger
+  end
+
+  def write(string)
+    #assume anything written to stderr is an error
+    @logger.error(message)
+  end
+end
+
+
 # -------------------------------------------------------------------------------------------
 # ---------------------------------------------------------------------------------- [Server]
 # -------------------------------------------------------------------------------------------
@@ -738,8 +751,10 @@ class Server
     trap_signals
 
     if daemonize?
-      suppress_output
-      $logger = Logger.new logfile, 'weekly'
+      $logger = Logger.new logfile
+      $stderr.reopen $logger.instance_variable_get(:@logdev).dev
+      $stdout.reopen $stderr
+      $stdout.sync = $stderr.sync = true
     else
       $logger = Logger.new STDOUT
     end
@@ -873,7 +888,7 @@ debug_help      = "set $DEBUG to true"
 warn_help       = "enable warnings"
 
 op = OptionParser.new
-op.banner =  "flud control"
+op.banner =  "flud control daemon"
 op.separator ""
 op.separator "Usage: flud [options]"
 op.separator ""

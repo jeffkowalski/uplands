@@ -15,6 +15,8 @@ install: ruby-gems
 	chmod 0755 /etc/init.d/flud
 	-cp flud.yml /etc/flud.yml
 	-chmod 0644 /etc/flud.yml
+	-cp ~${REMOTE_USER}/.google-api.yaml /etc/.google-api.yaml
+	-chmod 0644 /etc/.google-api.yaml
 	insserv --verbose flud
 	service flud start
 
