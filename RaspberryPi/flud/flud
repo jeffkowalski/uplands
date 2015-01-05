@@ -141,7 +141,16 @@ require 'yaml'
 
 module OAuth
   class Google
-    @@config_file = (ENV['HOME'] || '/etc') + '/.google-api.yaml'
+    @@config_file = nil
+    ['~/.google-api.yaml',
+     '/etc/google-api.yaml'].each { |file|
+      begin
+        @@config_file = File.expand_path file
+        break if File.exist? @@config_file
+      rescue
+        next
+      end
+    }
     class << self
       def load
         if File.exist? @@config_file
