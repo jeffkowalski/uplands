@@ -1,5 +1,0 @@
-<streams>
-<stream id="0001" url="http://www.kqed.org/listen/live/mp3/kqedradio.pls" mimetype="audio/x-scpls" name="KQED Radio" />
-<stream id="0002" url="http://somafm.com/missioncontrol.pls" mimetype="audio/x-scpls" name="Soma SF Mission Control" />
-<stream id="0003" url="http://somafm.com/sf1033.pls" mimetype="audio/x-scpls" name="Soma SF 10-33" />
-</streams>
