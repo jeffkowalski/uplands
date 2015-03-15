@@ -121,6 +121,22 @@ class Valves
     commit
   end
 
+  def start valve
+    $semaphore.synchronize {
+      @on = valve
+      if @on > $config[:valve_specs].length || @on < 0
+        $logger.info "valve #{@on} out of range"
+        @on = 0
+        $trigger = Time.apocalypse
+      else
+        $logger.info "starting to run valve #{@on} - '#{$config[:valve_specs][@on-1][:name]}' for #{$config[:valve_specs][@on-1][:duration]} minutes"
+        $trigger = Time.now + $config[:valve_specs][@on-1][:duration] * 60 # duration in seconds
+      end
+    }
+
+    commit
+  end
+
   def stop
     $logger.info 'stopping valves'
     $semaphore.synchronize {
@@ -445,7 +461,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
   end
 
   def do_api_startValve request, response
-    $valves.start request.query['valve']
+    $valves.start request.query['valve'].to_i
     response.status = 200
     response['Content-Type'] = 'text/html'
     response.body = "#{$valves.on}"
@@ -899,8 +915,8 @@ op.separator ""
 op.separator ""
 op.separator "Process options:"
 op.on("-f", "--foreground",  foreground_help) {         options[:foreground] = true  }
-op.on("-p", "--pid PIDFILE", pidfile_help)    { |value| options[:pidfile]   = value }
-op.on("-l", "--log LOGFILE", logfile_help)    { |value| options[:logfile]   = value }
+op.on("-p", "--pid PIDFILE", pidfile_help)    { |value| options[:pidfile]    = value }
+op.on("-l", "--log LOGFILE", logfile_help)    { |value| options[:logfile]    = value }
 
 op.separator ""
 op.separator "Ruby options:"
