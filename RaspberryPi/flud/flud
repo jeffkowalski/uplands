@@ -571,7 +571,7 @@ INDEX_HTML
   end
 
   def do_POST request, response
-    $logger.info "webserver POST"
+    $logger.info "webserver POST #{request.query}"
     request.query.each do |key, value|
       if index = /^n(\d+)/.match(key)
         $config[:valve_specs][index.captures[0].to_i][:name] = value
@@ -686,6 +686,10 @@ class Configuration
 
   def [](param)
     return self.params[param]
+  end
+
+  def []=(param, value)
+    self.params[param] = value
   end
 
   def get_params
