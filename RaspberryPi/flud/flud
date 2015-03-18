@@ -213,7 +213,7 @@ module Calendar
   class GoogleAPIClient < ::Google::APIClient
     attr_reader :client
     def initialize oauth
-      super
+      super({:application_name=>'flud', :application_version=>'2.0'})
       authorization.client_id     = oauth["client_id"]
       authorization.client_secret = oauth["client_secret"]
       authorization.scope         = oauth["scope"]
@@ -246,6 +246,9 @@ module Calendar
     end
 
     def data_error data
+      if data.nil?
+        return "data is nil"
+      end
       data.to_hash["error"]
     end
   end
