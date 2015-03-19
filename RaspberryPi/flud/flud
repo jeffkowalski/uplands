@@ -361,9 +361,9 @@ class WeatherClient < Updateable
     rainfall = 0
     if @weather
       $logger.info "retrieving weather for zipcode #{$config[:zipcode]}"
-      data = @weather.forecast_for $config[:zipcode]
-      #$logger.debug data;
       begin
+        data = @weather.forecast_for $config[:zipcode]
+        #$logger.debug data;
         data['forecast']['simpleforecast']['forecastday'].each do |forecast|
           $logger.debug "#{forecast['date']['pretty']} => #{forecast['qpf_allday']['in']}"
           rainfall += forecast['qpf_allday']['in']
