@@ -332,10 +332,14 @@ class CalendarClient < Updateable
               :orderBy      => "startTime",
               :maxResults   => 1,
               :sortOrder    => 'a'}
-    events = @cal.events @query
-    #events.each{|ev| puts ev['start']['dateTime'] }
-    unless events.first.nil?
-      trigger = events.first['start']['dateTime']
+    begin
+      events = @cal.events @query
+      #events.each{|ev| puts ev['start']['dateTime'] }
+      unless events.first.nil?
+        trigger = events.first['start']['dateTime']
+      end
+    rescue => e
+      $logger.error "couldn't get calendar, #{e}"
     end
     freshen
     $logger.info "trigger = #{trigger}"
@@ -368,8 +372,8 @@ class WeatherClient < Updateable
           $logger.debug "#{forecast['date']['pretty']} => #{forecast['qpf_allday']['in']}"
           rainfall += forecast['qpf_allday']['in']
         end
-      rescue
-        $logger.error "couldn't get weather"
+      rescue => e
+        $logger.error "couldn't get weather, #{e}"
       end
     end
     freshen
@@ -819,7 +823,7 @@ class Server
           elsif $moisture > $config[:moisture_threshold]
             $logger.info "moisture delay"
           end
-          $trigger += WeatherClient::update_interval
+          $trigger += $weather.update_interval
         end
       elsif $status.is_stale?
         $status.print
