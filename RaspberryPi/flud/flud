@@ -408,8 +408,8 @@ class Status < Updateable
 end
 
 
-# -------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------- [Webserver]
+# -------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------
 
 require 'webrick'
@@ -581,11 +581,11 @@ INDEX_HTML
     $logger.info "webserver POST #{request.query}"
     request.query.each do |key, value|
       if index = /^n(\d+)/.match(key)
-        $config[:valve_specs][index.captures[0].to_i][:name] = value
+        $config[:valve_specs][index.captures[0].to_i][:name] = value.to_s
       elsif index = /^d(\d+)/.match(key)
         $config[:valve_specs][index.captures[0].to_i][:duration] = value.to_i
       else
-        $config[key.to_sym] = value
+        $config[key.to_sym] = value.to_s
       end
     end
     $config.write
@@ -706,7 +706,7 @@ class Configuration
   def write
     $logger.info 'writing configuration file'
     File.open(@conf_file, 'w') do |file|
-      file.write(Psych.dump @params)
+      file.write(YAML.dump @params)
     end
   end
 end
