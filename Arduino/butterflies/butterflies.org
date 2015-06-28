@@ -1,0 +1,4 @@
+* Easiest is to build using Arduino 1.6.5
+URL=https://github.com/arduino/Arduino
+* Commandline build not working yet
+ make ispload BOARD_TAG=gemma ARDUINO_PORT=/dev/ttyUSB0
