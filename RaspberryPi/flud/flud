@@ -584,6 +584,8 @@ INDEX_HTML
         $config[:valve_specs][index.captures[0].to_i][:name] = value.to_s
       elsif index = /^d(\d+)/.match(key)
         $config[:valve_specs][index.captures[0].to_i][:duration] = value.to_i
+      elsif /_threshold/.match(key)
+        $config[key.to_sym] = value.to_f
       else
         $config[key.to_sym] = value.to_s
       end
