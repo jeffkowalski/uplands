@@ -14,7 +14,7 @@
 
 #define FLIP_TIMER 1000
 
-struct {
+struct Payload {
   long ping;      // 32-bit counter
   byte id :7;     // identity, should be different for each node
   byte boost :1;  // whether compiled for boost chip or not
@@ -24,7 +24,7 @@ struct {
   word sensor2;   // sensor reading 2
 } payload;
 
-
+static bool testMode;
 volatile bool adcDone;
 
 // for low-noise/-power ADC readouts, we'll use ADC completion interrupts
@@ -57,7 +57,7 @@ static byte vccRead (byte count = 4) {
 Port soilSensor (1);      // P1.AIO
 Port voltageFlipPin1 (2); // P2.DIO
 Port voltageFlipPin2 (3); // P3.DIO
-
+Port testModePin (4);     // P4.DIO
 
 void setup() {
   cli();
@@ -86,6 +86,7 @@ void setup() {
   soilSensor.mode2 (INPUT);
   voltageFlipPin1.mode (OUTPUT);
   voltageFlipPin2.mode (OUTPUT);
+  testModePin.mode (INPUT);
 
   soilSensor.digiWrite2 (LOW);
   voltageFlipPin1.digiWrite (LOW);
@@ -119,10 +120,12 @@ static void readSensors () {
   payload.sensor2 = 1023 - soilSensor.anaRead(); // invert
 
   setSensorPolarity (0);
+
+  testMode = testModePin.digiRead();
 }
 
 
-static byte sendPayload () {
+static void sendPayload () {
   ++payload.ping;
 
   rf12_sleep (RF12_WAKEUP);
@@ -172,7 +175,9 @@ void loop() {
     #endif
   }
 
-  byte minutes = VCC_SLEEP_MINS (vcc);
-  while (minutes-- > 0)
-    Sleepy::loseSomeTime (60000); // 60000
+  if (!testMode) {
+    byte minutes = VCC_SLEEP_MINS (vcc);
+    while (minutes-- > 0)
+      Sleepy::loseSomeTime (60000); // 60000
+  }
 }
