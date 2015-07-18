@@ -292,7 +292,7 @@ class Updateable
     @last_check = Time.genesis
   end
 
-  def self.update_interval
+  def update_interval
     @update_interval
   end
 
@@ -305,8 +305,8 @@ class Updateable
   end
 
   def is_stale?
-    $logger.debug "checking whether #{self.class} (#{@last_check}, #{@update_interval}) is stale"
-    Time.now - @last_check >= @update_interval
+    $logger.debug "checking whether #{self.class} (#{last_check}, #{update_interval}) is stale"
+    Time.now - last_check >= update_interval
   end
 end
 
@@ -326,8 +326,8 @@ class CalendarClient < Updateable
     trigger = Time.apocalypse
     $logger.info "retrieving google calendar"
     @query = {:calendarId   => $config[:calendar_id],
-              :timeMin      => (Time.now -     @update_interval).iso8601,
-              :timeMax      => (Time.now + 2 * @update_interval).iso8601,
+              :timeMin      => (Time.now -     update_interval).iso8601,
+              :timeMax      => (Time.now + 2 * update_interval).iso8601,
               :singleEvents => "true",
               :orderBy      => "startTime",
               :maxResults   => 1,
