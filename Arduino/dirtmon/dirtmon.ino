@@ -113,11 +113,11 @@ static void setSensorPolarity (int polarity) {
 static void readSensors () {
   setSensorPolarity (1);
   delay (FLIP_TIMER);
-  payload.sensor1 = soilSensor.anaRead();
+  payload.sensor1 = 1023 - soilSensor.anaRead(); // invert
 
   setSensorPolarity (-1);
   delay (FLIP_TIMER);
-  payload.sensor2 = 1023 - soilSensor.anaRead(); // invert
+  payload.sensor2 = soilSensor.anaRead();
 
   setSensorPolarity (0);
 

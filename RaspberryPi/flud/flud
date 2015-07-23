@@ -649,7 +649,7 @@ class Dirtmon
             $xively.put "dirtmon1.vcc2", vcc2
             $xively.put "dirtmon1.moisture1", sensor1
             $xively.put "dirtmon1.moisture2", sensor2
-            $moisture = ((1023 - sensor1) + (1023 - sensor2)) / 2
+            $moisture = (sensor1 + sensor2) / 2
             $voltage  = (vcc1 + vcc2) / 2.0
             $dirtmon_timestamp = Time.now
           end
