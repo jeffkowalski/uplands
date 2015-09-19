@@ -128,3 +128,48 @@ def test_demand
   demand DateTime.parse("25/12/2015 01:00")
 end
 #test_demand
+
+
+# ------------------------------------------------------------------------------- [Webserver]
+# -------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------
+
+require 'webrick'
+
+class Webserver
+  def initialize options
+    @webserver = WEBrick::HTTPServer.new :Port => 8888
+    @webserver.mount("/CoolClock/", Resource, './CoolClock')
+    @webserver.mount '/', Simple
+    trap 'INT' do @webserver.shutdown end
+  end
+
+  def self.run! options
+    Webserver.new(options).run!
+  end
+
+  def run!
+    @webserver.start
+  end
+end
+
+class Resource < WEBrick::HTTPServlet::FileHandler
+  def do_POST request, response
+    response.status = 200
+  end
+end
+
+class Simple < WEBrick::HTTPServlet::AbstractServlet
+  def encode_entities str
+    str
+  end
+
+  def do_GET request, response
+    case request.path
+    when '/'
+    end
+    response.status = 200
+  end
+end
+
+Webserver.run! nil
