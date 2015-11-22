@@ -64,7 +64,10 @@ POL_SetupWindow_browse "$(eval_gettext 'Please select the setup file to run.')" 
 POL_SetupWindow_message "$(eval_gettext 'Warning: You must un-tick the checkbox [Launch Quicken 2016] when installation is complete.')" "$TITLE"
 POL_SetupWindow_wait "$(eval_gettext 'Please wait while $TITLE is installed.')" "$TITLE"
 
-# extract executable and patch it
+# extract executable and patch it to remove prevent
+# installation of Amyuni PDF printer, which causes failure
+#   Error Code: 1797
+#   Unknown printer driver.
 7z x "$APP_ANSWER"
 perl -pi.bak -0777e 's/NOT REMOVE="ALL"InstallPDFDriver/NOT_REMOVE="ALL"InstallPDFDriver/' "DISK1/Quicken 2016.msi"
 POL_Wine start /unix DISK1/Setup.exe
