@@ -1,9 +1,0 @@
-/var/log/flud.log {
-  size 100k
-  rotate 6
-  copytruncate
-  missingok
-  notifempty
-  compress
-  delaycompress
-}
