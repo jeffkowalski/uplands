@@ -1,0 +1,6 @@
+* Install Picasa3.9 using Playonlinux
+* Replace f: drive
+rm dosdevices/f:
+ln -s /mnt/SiliconPower dosdevices/f:
+* Using regedit, import picasa.reg
+* Adjust preferences
