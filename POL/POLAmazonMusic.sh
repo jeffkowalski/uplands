@@ -11,7 +11,7 @@ source "$PLAYONLINUX/lib/sources"
 
 TITLE="Amazon Music"
 PREFIX="amazon_music"
-WORKING_WINE_VERSION="3.0.1"
+WORKING_WINE_VERSION="3.11"
 
 # initialize
 POL_SetupWindow_Init

@@ -11,7 +11,7 @@ source "$PLAYONLINUX/lib/sources"
 
 TITLE="Quicken Premier 2016"
 PREFIX="quicken2016"
-WORKING_WINE_VERSION="3.0.1"
+WORKING_WINE_VERSION="3.11"
 
 # initialize
 POL_SetupWindow_Init
