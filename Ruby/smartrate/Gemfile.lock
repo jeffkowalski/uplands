@@ -1,13 +1,8 @@
-GIT
-  remote: https://github.com/holidays/holidays
-  revision: c12f43264718ab77724686624a568b1ddeff5ce9
-  specs:
-    holidays (3.1.2)
-
 GEM
   remote: https://rubygems.org/
   specs:
     coderay (1.1.0)
+    holidays (7.1.0)
     method_source (0.8.2)
     mini_portile2 (2.0.0)
     nokogiri (1.6.7.2)
@@ -20,13 +15,13 @@ GEM
       pry (~> 0.9)
       yard (~> 0.8)
     slop (3.6.0)
-    yard (0.8.7.6)
+    yard (0.9.20)
 
 PLATFORMS
   ruby
 
 DEPENDENCIES
-  holidays!
+  holidays
   method_source (>= 0.8.2)
   nokogiri
   pry
